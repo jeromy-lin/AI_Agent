@@ -1,0 +1,835 @@
+# Day 1｜Lab 1：建立 Manufacturing AI Product Dashboard
+
+你是一位熟悉 Python、Pandas、Google Colab、Plotly、Gradio、ERP 與製造業資料分析的 AI 工程師。
+
+我要使用 Google Colab 建立一個「生活家電製造業 Manufacturing AI Dashboard」。
+
+我的學員不是工程師，因此請產生：
+
+* 完整可直接執行的 Python Code
+* 結構簡單
+* 繁體中文註解
+* 避免使用 Class
+* 避免複雜物件導向
+* 以初學者能看懂為原則
+* 每一個 Step 都清楚標示
+
+---
+
+## 一、使用環境
+
+請使用：
+
+* Google Colab
+* pandas
+* openpyxl
+* plotly
+* gradio
+* google.colab.files
+* IPython.display
+
+程式最前面請自動安裝必要套件：
+
+```python
+!pip install -q gradio plotly openpyxl
+```
+
+---
+
+## 二、Excel 上傳與讀取
+
+請讓使用者從電腦上傳 Excel。
+
+要求：
+
+1. 使用 `files.upload()`
+2. 自動取得使用者上傳的第一個檔名
+3. 不要把 Excel 檔名寫死
+4. 顯示所有 Sheet 名稱
+5. 讀取工作表：
+
+`SKU總表`
+
+非常重要：
+
+這份 Excel 的真正欄位名稱位於 Excel 第 3 列。
+
+所以一定要使用：
+
+```python
+header=2
+```
+
+例如：
+
+```python
+product_df = pd.read_excel(
+    file_name,
+    sheet_name="SKU總表",
+    header=2
+)
+```
+
+讀取後，請清除欄位名稱前後空白：
+
+```python
+product_df.columns = (
+    product_df.columns
+    .astype(str)
+    .str.strip()
+)
+```
+
+---
+
+## 三、必要欄位檢查
+
+Excel 至少應該包含：
+
+* SKU
+* 產品群
+* 產品別
+* 產品定位
+* 業務模式
+* 品牌/委託客戶
+* 主規格值
+* 單位
+* 上市年月
+* 生命週期
+
+請先建立 `required_columns`。
+
+如果有欄位不存在：
+
+1. 顯示缺少哪些欄位
+2. 不要繼續執行後續分析
+3. 使用友善的錯誤訊息
+4. 避免出現難以理解的 `KeyError`
+
+---
+
+## 四、資料預覽
+
+請顯示：
+
+1. 資料筆數
+2. 欄位數量
+3. 所有欄位名稱
+4. 前 10 筆資料
+
+並把：
+
+* 上市年月
+* 停產年月（如果存在）
+
+轉為 datetime。
+
+---
+
+# 五、建立 Dashboard 基本 KPI
+
+請計算：
+
+1. SKU 總數
+2. 產品別數量
+3. 產品群數量
+4. OBM SKU 數量
+5. OEM SKU 數量
+6. ODM SKU 數量
+
+這些數字最後要直接顯示在 Gradio Dashboard 首頁。
+
+---
+
+# 六、建立 Plotly 圖表
+
+請建立以下 5 張 Plotly 圖。
+
+### 圖表 1：各產品別 SKU 數量
+
+使用長條圖。
+
+X 軸：
+
+`產品別`
+
+Y 軸：
+
+`SKU數`
+
+請顯示數字 Label。
+
+---
+
+### 圖表 2：OBM / OEM / ODM 分布
+
+使用 Donut Chart。
+
+欄位：
+
+`業務模式`
+
+分類：
+
+* OBM
+* OEM
+* ODM
+
+---
+
+### 圖表 3：產品定位分布
+
+使用長條圖。
+
+分類：
+
+* 入門型
+* 中階型
+* 高階型
+
+---
+
+### 圖表 4：產品別 × 業務模式
+
+使用 grouped bar chart。
+
+X 軸：
+
+`產品別`
+
+Color：
+
+`業務模式`
+
+比較：
+
+OBM / OEM / ODM。
+
+---
+
+### 圖表 5：上市年度分析
+
+從：
+
+`上市年月`
+
+取出年份。
+
+建立：
+
+`上市年份`
+
+再分析每年不同產品別上市多少 SKU。
+
+使用 stacked bar chart。
+
+---
+
+# 七、建立 Product Search Tools
+
+請建立以下 Python Function。
+
+---
+
+## Tool 1
+
+```python
+search_product(product_name)
+```
+
+功能：
+
+輸入：
+
+* 咖啡機
+* 氣炸鍋
+* 吸塵器
+* 除濕機
+
+等產品名稱。
+
+回傳符合的產品。
+
+結果至少顯示：
+
+* SKU
+* 產品別
+* 產品定位
+* 業務模式
+* 品牌/委託客戶
+* 主規格值
+* 單位
+* 上市年月
+* 生命週期
+
+如果找不到產品，不要 Error。
+
+---
+
+## Tool 2
+
+```python
+search_sku(sku)
+```
+
+可以輸入完整 SKU，例如：
+
+```text
+CF-E-B-06
+```
+
+回傳該 SKU 的完整產品資料。
+
+如果不存在，也不要造成 Error。
+
+---
+
+## Tool 3
+
+```python
+product_filter(
+    product=None,
+    tier=None,
+    business_mode=None,
+    lifecycle=None
+)
+```
+
+讓使用者可以依照：
+
+* 產品別
+* 產品定位
+* 業務模式
+* 生命週期
+
+進行多條件篩選。
+
+---
+
+# 八、建立自然語言解析器
+
+目前先不要串 Gemini API。
+
+請先建立 Rule-based Agent。
+
+建立：
+
+```python
+detect_conditions(question)
+```
+
+讓它可以辨識中文自然語言。
+
+---
+
+## 產品名稱
+
+請直接從：
+
+```python
+product_df["產品別"]
+```
+
+取得所有產品名稱。
+
+例如：
+
+* 咖啡機
+* 氣炸鍋
+* 果汁調理機
+* 電子鍋
+* 吸塵器
+* 空氣清淨機
+* 除濕機
+* 吹風機
+
+如果名稱出現在問題裡，就辨識該產品。
+
+---
+
+## 產品定位辨識
+
+將：
+
+```text
+入門
+```
+
+轉成：
+
+```text
+入門型
+```
+
+將：
+
+```text
+中階
+```
+
+轉成：
+
+```text
+中階型
+```
+
+將：
+
+```text
+高階
+```
+
+轉成：
+
+```text
+高階型
+```
+
+---
+
+## 業務模式辨識
+
+辨識：
+
+* OBM
+* OEM
+* ODM
+
+大小寫皆可。
+
+---
+
+## 生命週期辨識
+
+請支援：
+
+```text
+新品
+```
+
+對應：
+
+```text
+新品
+```
+
+```text
+成長
+```
+
+對應：
+
+```text
+成長機種
+```
+
+```text
+成熟
+```
+
+或：
+
+```text
+主力
+```
+
+對應：
+
+```text
+主力/成熟
+```
+
+```text
+停產
+```
+
+對應：
+
+```text
+歷史停產
+```
+
+---
+
+# 九、建立 Product Agent
+
+建立：
+
+```python
+product_agent(question)
+```
+
+例如使用者輸入：
+
+```text
+請找 OBM 的中階咖啡機
+```
+
+程式要自動理解：
+
+```text
+產品別 = 咖啡機
+產品定位 = 中階型
+業務模式 = OBM
+```
+
+然後呼叫：
+
+```python
+product_filter()
+```
+
+查詢 Product Master。
+
+---
+
+Product Agent 要回傳 3 個結果：
+
+### 第一個
+
+文字摘要。
+
+例如：
+
+```text
+🤖 Product Agent 分析結果
+
+產品別：咖啡機
+產品定位：中階型
+業務模式：OBM
+
+符合條件 SKU：3 筆
+
+產品定位分布：
+• 中階型：3 SKU
+
+業務模式分布：
+• OBM：3 SKU
+```
+
+---
+
+### 第二個
+
+Pandas DataFrame。
+
+顯示符合條件的產品資料。
+
+---
+
+### 第三個
+
+Plotly 圖表。
+
+顯示查詢結果的：
+
+`產品定位`
+
+SKU 分布。
+
+---
+
+如果使用者完全沒有輸入可以辨識的條件，例如：
+
+```text
+這家公司怎麼樣？
+```
+
+不要把全部 232 筆資料吐出來。
+
+要回覆：
+
+```text
+我目前沒有辨識到產品查詢條件。
+
+你可以試著問：
+
+請找高階咖啡機
+請找 OBM 中階氣炸鍋
+有哪些新品？
+有哪些停產除濕機？
+```
+
+---
+
+# 十、建立 Gradio Manufacturing AI Dashboard
+
+使用：
+
+```python
+gr.Blocks()
+```
+
+建立完整 Web Dashboard。
+
+標題：
+
+```text
+🏭 Manufacturing AI Dashboard
+```
+
+副標題：
+
+```text
+Product Agent v0.1
+```
+
+再顯示：
+
+```text
+Data → Python → Visualization → Agent
+```
+
+---
+
+# 十一、Dashboard 必須包含 4 個 Tab
+
+---
+
+## Tab 1
+
+名稱：
+
+```text
+📊 產品總覽
+```
+
+一打開 Dashboard 就直接看到結果。
+
+非常重要：
+
+### 不要建立「更新 Dashboard」按鈕。
+
+圖表必須直接顯示。
+
+首頁先用 Markdown Table 顯示 KPI：
+
+* SKU 總數
+* 產品別
+* 產品群
+* OBM
+* OEM
+* ODM
+
+下面直接呈現：
+
+第一排：
+
+* 產品別 SKU 長條圖
+* OBM/OEM/ODM Donut
+
+第二排：
+
+* 產品定位
+* 產品別 × 業務模式
+
+第三排：
+
+* 上市年度分析
+
+使用：
+
+```python
+gr.Row()
+```
+
+排版。
+
+Plotly 圖請直接使用：
+
+```python
+gr.Plot(value=fig_xxx)
+```
+
+不要讓畫面一開始出現空白 Plot。
+
+---
+
+## Tab 2
+
+名稱：
+
+```text
+🤖 Product Agent
+```
+
+包含：
+
+### 使用者輸入框
+
+```python
+gr.Textbox()
+```
+
+提示：
+
+```text
+例如：請找 OBM 的中階咖啡機
+```
+
+### 分析按鈕
+
+```text
+🤖 開始分析
+```
+
+### Agent 分析文字
+
+使用：
+
+```python
+gr.Textbox()
+```
+
+### 產品結果表格
+
+使用：
+
+```python
+gr.Dataframe()
+```
+
+### 分析圖表
+
+使用：
+
+```python
+gr.Plot()
+```
+
+按下按鈕後呼叫：
+
+```python
+product_agent
+```
+
+另外請支援：
+
+按 Enter 也可以查詢。
+
+使用：
+
+```python
+question_input.submit(...)
+```
+
+---
+
+## Tab 3
+
+名稱：
+
+```text
+🔎 Product Master
+```
+
+直接顯示完整：
+
+```python
+product_df
+```
+
+讓學生可以看見 Agent 背後的 ERP Product Master。
+
+---
+
+## Tab 4
+
+名稱：
+
+```text
+🎯 學生挑戰
+```
+
+請顯示以下 Challenge：
+
+1. 公司目前有哪些產品別？
+2. 哪一個產品別 SKU 最多？
+3. 找出所有高階產品。
+4. 找出 OBM 中階咖啡機。
+5. 找出 OEM 入門氣炸鍋。
+6. 比較 OBM、OEM、ODM SKU 數量。
+7. 找出所有新品。
+8. 找出所有已停產產品。
+
+進階挑戰：
+
+* 我要看新品咖啡機
+* 有哪些停產除濕機？
+* 我要看高階 ODM 吸塵器
+* 有哪些中階 OBM 產品？
+
+---
+
+# 十二、啟動 Gradio
+
+最後請使用：
+
+```python
+demo.launch(
+    share=True,
+    debug=True
+)
+```
+
+---
+
+# 十三、重要程式設計要求
+
+這是一堂給「非工程師製造業學員」的課程。
+
+因此：
+
+1. 不使用 Class。
+2. 不使用複雜物件導向。
+3. 不使用 LangChain。
+4. 不使用 LangGraph。
+5. 不使用任何 Gemini API。
+6. 不使用付費 API。
+7. 不要過度封裝。
+8. 每一個 Function 都要清楚。
+9. 所有註解使用繁體中文。
+10. 每個區塊都使用 Step 編號。
+11. Code 要可以直接貼進 Google Colab 從上到下執行。
+12. 如果資料欄位不正確，要在前面就先檢查。
+13. 不要讓使用者看到 `KeyError: 產品別` 這種可以預防的錯誤。
+14. Dashboard 一開啟就要直接顯示圖表，不要先出現空白圖表。
+15. 不要要求使用者再按「更新 Dashboard」。
+
+---
+
+# 十四、教學核心
+
+請讓整份程式清楚呈現這條學習路徑：
+
+```text
+Excel
+↓
+Pandas DataFrame
+↓
+Data Analysis
+↓
+Plotly Visualization
+↓
+Python Function
+↓
+Product Tools
+↓
+Natural Language Rule
+↓
+Product Agent
+↓
+Gradio Dashboard
+```
+
+最終請一次輸出：
+
+**完整、可直接複製到 Google Colab 執行的 Python Code。**
+
+不要只提供部分程式。
+
+不要省略 Step。
+
+不要另外解釋太多理論。
+
+請以完整 Code 為主要輸出。
