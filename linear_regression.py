@@ -38,6 +38,7 @@ from sklearn.metrics import (
 # 1. 柔和配色設定
 # ===========================================================
 
+# 表格用柔和色
 COLOR_BLUE   = "#A9C5E8"
 COLOR_ORANGE = "#F6C28B"
 COLOR_RED    = "#EFA6A6"
@@ -49,21 +50,11 @@ COLOR_PINK   = "#F4C6D7"
 COLOR_BROWN  = "#D4B6A5"
 COLOR_GRAY   = "#D6D6D6"
 
+# 圖表散點使用較深藍色
+CHART_BLUE = "#5B8FC9"
+
 TEXT_DARK = "#4A4A4A"
 GRID_COLOR = "#E6E6E6"
-
-COLOR_PALETTE = [
-    COLOR_BLUE,
-    COLOR_ORANGE,
-    COLOR_RED,
-    COLOR_TEAL,
-    COLOR_GREEN,
-    COLOR_YELLOW,
-    COLOR_PURPLE,
-    COLOR_PINK,
-    COLOR_BROWN,
-    COLOR_GRAY
-]
 
 
 # 圖表基本設定
@@ -493,9 +484,9 @@ plt.figure(
 plt.scatter(
     y_test,
     y_pred,
-    color=COLOR_BLUE,
-    alpha=0.85,
-    s=70,
+    color=CHART_BLUE,
+    alpha=0.92,
+    s=78,
     edgecolors="white",
     linewidths=0.7
 )
@@ -781,9 +772,9 @@ plt.scatter(
 
     color=COLOR_ORANGE,
 
-    alpha=0.80,
+    alpha=0.82,
 
-    s=60,
+    s=62,
 
     edgecolors="white",
 
