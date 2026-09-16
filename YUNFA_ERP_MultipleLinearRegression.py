@@ -1,8 +1,10 @@
 # ============================================================
-#  YUNFA ERP - Multiple Linear Regression by Product Line
-#  Day 2 - Practice 1 
-#  Prompt Engineering Result
-#  作者 : 國立雲林科技大學電機工程系 林家仁
+# YUNFA ERP - Method 01
+# Multiple Linear Regression by Product Line
+# YUNFA ERP - Multiple Linear Regression by Product Line
+# Day 2 - Practice 1 
+# Prompt Engineering Result
+# 作者 : 國立雲林科技大學電機工程系 林家仁
 # ============================================================
 
 # 如 Colab 尚未安裝套件，可先執行：
@@ -70,8 +72,14 @@ excel_bytes.seek(0)
 cost_df = pd.read_excel(excel_bytes, sheet_name="成本結算")
 
 print("\n【產品主檔】")
+product_display = product_df.head().copy()
+product_format = {}
+if "標準毛利率" in product_display.columns:
+    product_format["標準毛利率"] = "{:.2%}"
+
 display(
-    product_df.head().style
+    product_display.style
+    .format(product_format)
     .set_properties(**{
         "background-color": "#FFFDFC",
         "color": TEXT_DARK,
@@ -94,8 +102,19 @@ cost_display = cost_df.head().rename(columns={
     "測試工時_hr": "測試工時(hr)",
     "換線工時_hr": "換線工時(hr)",
 })
+cost_format = {}
+for col in cost_display.columns:
+    if pd.api.types.is_numeric_dtype(cost_display[col]):
+        if "(hr)" in str(col):
+            cost_format[col] = "{:,.2f}"
+        elif "率" in str(col) or "%" in str(col):
+            cost_format[col] = "{:.2%}"
+        else:
+            cost_format[col] = "{:,.0f}"
+
 display(
     cost_display.style
+    .format(cost_format)
     .set_properties(**{
         "background-color": "#FFFDFC",
         "color": TEXT_DARK,
@@ -359,6 +378,11 @@ def run_regression(product_line):
     # --------------------------------------------------------
     print("\n【各變數對成本的影響程度】")
     coef_show = coef_df[["變數", "標準化迴歸係數"]].copy()
+    coef_show["影響方向"] = np.where(
+        coef_show["標準化迴歸係數"] >= 0,
+        "正向",
+        "負向"
+    )
     coef_show["變數"] = coef_show["變數"].replace({
         "CNC加工工時_hr": "CNC加工工時(hr)",
         "組裝工時_hr": "組裝工時(hr)",
@@ -367,6 +391,8 @@ def run_regression(product_line):
     })
 
     # 使用淡米杏色階，維持深色文字，避免深色背景造成閱讀困難
+    coef_show = coef_show[["變數", "標準化迴歸係數", "影響方向"]]
+
     coef_abs_max = max(coef_show["標準化迴歸係數"].abs().max(), 1)
 
     def coef_soft_color(v):
@@ -407,6 +433,12 @@ def run_regression(product_line):
     # --------------------------------------------------------
     # 暖色系誤差表
     # --------------------------------------------------------
+    print("\n【迴歸係數方向說明】")
+    print("正係數：在其他變數固定下，該變數增加時，預測製造成本傾向增加。")
+    print("負係數：在其他變數固定下，該變數增加時，預測製造成本傾向降低。")
+    print("標準化迴歸係數主要用來比較各變數的影響方向與相對程度，")
+    print("不應直接解讀為因果關係。")
+
     print("\n【預測誤差最大的 10 筆工單】")
     top_error = (
         result.sort_values(
@@ -573,11 +605,6 @@ def run_regression(product_line):
     plt.tight_layout()
     plt.show()
 
-    print("\n【結果說明】")
-    print(
-        "圖表採用暖色系柔和配色，圖中文字維持英文；"
-        "表格與模型解說維持中文，方便課堂說明。"
-    )
 
     return model, result, coef_df
 
