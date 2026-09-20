@@ -1,56 +1,181 @@
 你是一位熟悉製造業 ERP、成本分析、機器學習與 Python 的資料分析工程師。
 
-請協助我建立一套可在 Google Colab CPU 環境直接執行的
-「YUNFA ERP－多元線性迴歸製造成本預測程式」。
+請依照以下規格，建立一套可在 Google Colab CPU 環境直接執行的
+「YUNFA ERP－Multiple Linear Regression by Product Line」完整 Python 程式。
 
 請一次完整輸出所有 Python Code。
 
 ==================================================
-【分析目的】
+【整體功能】
 ==================================================
 
-使用 ERP 中的「產品主檔」與「成本結算」資料，
-依產品線建立獨立的 Multiple Linear Regression 模型，
-預測：
+使用 ERP 中：
+
+- 產品主檔
+- 成本結算
+
+建立依產品線分開訓練的 Multiple Linear Regression 製造成本預測模型。
+
+使用者可透過下拉選單選擇產品線，
+再按下按鈕執行該產品線的多元線性迴歸分析。
+
+模型預測目標：
 
 實際製造成本_TWD
 
-並輸出：
-
-- R²
-- MAE
-- RMSE
-- MAPE
-- ±3% 預測範圍
-- 預測誤差分析
-- Manufacturing Cost Drivers
-- Actual vs Predicted
-- Prediction Error Distribution
-- Top 10 Error Jobs
-
 ==================================================
-【STEP 1｜Upload ERP Excel】
+【套件】
 ==================================================
 
-使用者自行上傳 ERP Excel 檔案。
+請使用：
+
+import io
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import ipywidgets as widgets
+
+from IPython.display import display, clear_output
+from google.colab import files
+
+from sklearn.model_selection import train_test_split
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+
+==================================================
+【視覺配色】
+==================================================
 
 使用：
 
-from google.colab import files
-uploaded = files.upload()
+WARM_BLUE   = "#6FA8DC"
+WARM_ORANGE = "#F6B26B"
+WARM_GREEN  = "#93C47D"
+WARM_RED    = "#E06666"
+WARM_PURPLE = "#B4A7D6"
+WARM_GOLD   = "#FFD966"
+WARM_BEIGE  = "#FCE5CD"
+WARM_PEACH  = "#F4CCCC"
+WARM_MINT   = "#D9EAD3"
+WARM_GRAY   = "#EDEDED"
+TEXT_DARK   = "#3F3F3F"
 
-不可寫死檔案路徑。
+Matplotlib 設定：
+
+figure.facecolor = white
+axes.facecolor = #FFFDFC
+axes.edgecolor = #D9D9D9
+axes.labelcolor = TEXT_DARK
+xtick.color = TEXT_DARK
+ytick.color = TEXT_DARK
+text.color = TEXT_DARK
+grid.color = #EDE7E0
+grid.alpha = 0.75
 
 ==================================================
-【STEP 2｜Read ERP Sheets】
+【STEP 1｜上傳 YUNFA ERP Excel】
+==================================================
+
+使用：
+
+uploaded = files.upload()
+file_name = next(iter(uploaded))
+excel_bytes = io.BytesIO(uploaded[file_name])
+
+輸出：
+
+已載入檔案：檔名
+
+==================================================
+【STEP 2｜讀取 ERP 資料表】
 ==================================================
 
 讀取：
 
-1. 產品主檔
-2. 成本結算
+sheet_name="產品主檔"
 
-產品主檔主要欄位：
+以及：
+
+sheet_name="成本結算"
+
+讀取第二張 Sheet 前使用：
+
+excel_bytes.seek(0)
+
+--------------------------------------------------
+【產品主檔顯示】
+--------------------------------------------------
+
+顯示：
+
+product_df.head()
+
+如果存在：
+
+標準毛利率
+
+使用：
+
+"{:.2%}"
+
+顯示。
+
+表格樣式：
+
+背景：
+#FFFDFC
+
+文字：
+TEXT_DARK
+
+Header：
+WARM_BEIGE
+
+有邊框。
+
+--------------------------------------------------
+【成本結算顯示】
+--------------------------------------------------
+
+顯示前 5 筆。
+
+顯示時將：
+
+CNC加工工時_hr
+→ CNC加工工時(hr)
+
+組裝工時_hr
+→ 組裝工時(hr)
+
+測試工時_hr
+→ 測試工時(hr)
+
+換線工時_hr
+→ 換線工時(hr)
+
+數值格式：
+
+工時：
+"{:,.2f}"
+
+百分比：
+"{:.2%}"
+
+其他數值：
+"{:,.0f}"
+
+表格 Header：
+
+WARM_MINT
+
+==================================================
+【STEP 3｜ERP 資料整合】
+==================================================
+
+產品主檔使用欄位：
 
 - SKU
 - 產品線
@@ -58,9 +183,8 @@ uploaded = files.upload()
 - 標準人工成本_TWD
 - 標準委外成本_TWD
 - 標準製造費_TWD
-- 標準毛利率
 
-成本結算主要欄位：
+成本結算使用欄位：
 
 - 工單ID
 - SKU
@@ -71,66 +195,11 @@ uploaded = files.upload()
 - 換線工時_hr
 - 實際製造成本_TWD
 
-兩張 Sheet 必須完整讀取。
-
-畫面只顯示前 5 筆供資料檢視。
-
-標準毛利率顯示為百分比，例如：
-
-0.25
-→
-25.00%
-
-金額與數量欄位使用千分位顯示。
-
-工時欄位顯示至小數第 2 位。
-
-==================================================
-【STEP 3｜Data Cleaning】
-==================================================
-
-將成本與工時欄位轉換為 numeric。
-
-保留原始精度供模型使用。
-
-資料顯示時可進行格式化，
-但不要修改模型實際使用的原始數值。
-
-==================================================
-【STEP 4｜Merge ERP Data】
-==================================================
-
 以：
 
 SKU
 
-將：
-
-產品主檔
-與
-成本結算
-
-進行 merge。
-
-建立完整建模資料。
-
-==================================================
-【STEP 5｜Product Line Selection】
-==================================================
-
-建立產品線選擇功能。
-
-每次只選擇一個產品線進行模型訓練與分析。
-
-不同產品線必須獨立建模。
-
-不要將不同產品線混在同一個模型。
-
-產品線不做 One-Hot Encoding。
-
-==================================================
-【STEP 6｜Feature Engineering】
-==================================================
+進行 inner merge。
 
 建立：
 
@@ -147,107 +216,255 @@ SKU
 = 完工數量 × 標準製造費_TWD
 
 ==================================================
-【STEP 7｜Regression Features】
+【STEP 4｜定義 X 與 Y】
 ==================================================
 
-X 使用以下 9 個特徵：
+FEATURES：
 
-1. 完工數量
-2. 標準材料總成本
-3. 標準人工總成本
-4. 標準委外總成本
-5. 標準製造費總額
-6. CNC加工工時_hr
-7. 組裝工時_hr
-8. 測試工時_hr
-9. 換線工時_hr
+[
+    "完工數量",
+    "標準材料總成本",
+    "標準人工總成本",
+    "標準委外總成本",
+    "標準製造費總額",
+    "CNC加工工時_hr",
+    "組裝工時_hr",
+    "測試工時_hr",
+    "換線工時_hr"
+]
 
-Y：
+FEATURE_LABELS：
+
+完工數量
+→ Completed Quantity
+
+標準材料總成本
+→ Standard Material Cost
+
+標準人工總成本
+→ Standard Labor Cost
+
+標準委外總成本
+→ Standard Outsourcing Cost
+
+標準製造費總額
+→ Standard Manufacturing Overhead
+
+CNC加工工時_hr
+→ CNC Machining Hours
+
+組裝工時_hr
+→ Assembly Hours
+
+測試工時_hr
+→ Test Hours
+
+換線工時_hr
+→ Setup Hours
+
+PRODUCT_LINE_EN：
+
+汽車精密零組件
+→ Automotive Precision Parts
+
+精密金屬加工件
+→ Precision Metal Components
+
+機電／自動化模組
+→ Mechatronics & Automation Modules
+
+半導體設備零組件
+→ Semiconductor Equipment Parts
+
+TARGET：
 
 實際製造成本_TWD
 
-==================================================
-【STEP 8｜Train / Test Split】
-==================================================
+建立：
+
+model_df
+
+保留：
+
+工單ID
+SKU
+產品線
+FEATURES
+TARGET
 
 使用：
 
-train_test_split
+dropna()
 
-設定：
+輸出：
 
-test_size = 0.25
-random_state = 42
+ERP 建模資料已建立完成。
+總建模筆數
 
-訓練集 75%
-測試集 25%
+並輸出各產品線資料筆數表。
 
-==================================================
-【STEP 9｜Standardization】
-==================================================
+Header 使用：
 
-使用：
-
-StandardScaler
-
-對 X 進行標準化。
+WARM_GOLD
 
 ==================================================
-【STEP 10｜Multiple Linear Regression】
+【STEP 5｜產品線選單】
 ==================================================
 
 建立：
 
-LinearRegression
+widgets.Dropdown
 
-模型。
+options：
 
-使用標準化後的訓練資料訓練。
+所有產品線排序後的 unique values
 
-使用測試資料進行預測。
+description：
+
+產品線：
+
+width：
+
+500px
+
+建立按鈕：
+
+description：
+
+執行多元回歸
+
+button_style：
+
+warning
+
+icon：
+
+play
+
+width：
+
+180px
+
+建立：
+
+widgets.Output()
+
+顯示：
+
+Dropdown + Button
+
+以及 output。
 
 ==================================================
-【STEP 11｜Model Evaluation】
+【STEP 6｜多元回歸函數】
+==================================================
+
+建立：
+
+def run_regression(product_line):
+
+先依產品線篩選：
+
+selected_df
+
+如果資料筆數 < 20：
+
+輸出：
+
+此產品線資料筆數不足，無法建立穩定模型。
+
+並 return。
+
+--------------------------------------------------
+【Train / Test】
+--------------------------------------------------
+
+X：
+
+selected_df[FEATURES]
+
+y：
+
+selected_df[TARGET]
+
+使用：
+
+train_test_split(
+    X,
+    y,
+    test_size=0.25,
+    random_state=42
+)
+
+--------------------------------------------------
+【Pipeline】
+--------------------------------------------------
+
+建立：
+
+ColumnTransformer
+
+對 FEATURES 使用：
+
+StandardScaler()
+
+建立 Pipeline：
+
+preprocessor
++
+LinearRegression()
+
+執行：
+
+model.fit(X_train, y_train)
+
+以及：
+
+y_pred = model.predict(X_test)
+
+==================================================
+【模型評估】
 ==================================================
 
 計算：
 
-R²
-MAE
-RMSE
-MAPE
+r2 = r2_score(y_test, y_pred)
 
-顯示：
+mae = mean_absolute_error(y_test, y_pred)
 
-客戶選擇的產品線
-樣本數
-訓練集筆數
-測試集筆數
-R²
-MAE
-RMSE
-MAPE
-測試集平均實際成本
+rmse = np.sqrt(mean_squared_error(y_test, y_pred))
 
-R² 使用百分比顯示。
+MAPE：
 
-例如：
-
-0.9855
-→
-98.55%
-
-R² 請稱為：
-
-決定係數
-
-不要稱為 Accuracy。
+np.mean(
+    np.abs(
+        (y_test.values - y_pred) /
+        np.maximum(np.abs(y_test.values), 1)
+    )
+) * 100
 
 ==================================================
-【STEP 12｜±3% Prediction Range】
+【預測結果】
 ==================================================
 
-針對每一筆測試資料建立：
+建立 result。
+
+保留：
+
+工單ID
+SKU
+產品線
+
+加入：
+
+實際製造成本
+預測製造成本
+
+--------------------------------------------------
+【±3% 預測範圍】
+--------------------------------------------------
+
+建立：
 
 預測下限(-3%)
 = 預測製造成本 × 0.97
@@ -255,18 +472,17 @@ R² 請稱為：
 預測上限(+3%)
 = 預測製造成本 × 1.03
 
-建立欄位：
+建立：
 
 是否落在±3%區間
 
-判斷條件：
+如果：
 
-實際製造成本
-位於
-預測下限(-3%)
-與
-預測上限(+3%)
-之間
+實際製造成本 >= 預測下限(-3%)
+
+且：
+
+實際製造成本 <= 預測上限(+3%)
 
 則：
 
@@ -276,45 +492,9 @@ R² 請稱為：
 
 否
 
-計算：
-
-落在 ±3% 預測範圍比例
-
-並在模型摘要中顯示。
-
-==================================================
-【STEP 13｜Prediction Result Table】
-==================================================
-
-建立：
-
-【±3% 預測範圍結果】
-
-欄位：
-
-- 工單ID
-- SKU
-- 實際製造成本
-- 預測製造成本
-- 預測下限(-3%)
-- 預測上限(+3%)
-- 是否落在±3%區間
-
-金額使用：
-
-"{:,.0f}"
-
-是否落在±3%區間：
-
-是
-→ 淡綠色
-
-否
-→ 淡紅色、深紅字、粗體
-
-==================================================
-【STEP 14｜Prediction Error】
-==================================================
+--------------------------------------------------
+【預測誤差】
+--------------------------------------------------
 
 建立：
 
@@ -325,21 +505,167 @@ R² 請稱為：
 = abs(預測誤差)
 
 誤差率(%)
-= 絕對誤差 ÷ 實際製造成本 × 100
+= 絕對誤差 / max(實際製造成本, 1) × 100
 
 ==================================================
-【STEP 15｜Top 10 Error Jobs】
+【標準化迴歸係數】
+==================================================
+
+取得：
+
+model.named_steps["regression"].coef_
+
+建立 coef_df：
+
+- 變數
+- 圖表英文名稱
+- 標準化迴歸係數
+
+建立：
+
+影響程度
+= abs(標準化迴歸係數)
+
+依：
+
+影響程度
+
+由大到小排序。
+
+==================================================
+【中文模型摘要】
 ==================================================
 
 輸出：
 
-【預測誤差最大的 10 筆工單】
+YUNFA ERP－多元線性迴歸分析
 
-依：
+顯示：
 
-絕對誤差
+選定產品線
+建模資料筆數
+訓練集 / 測試集
+R²
+MAE
+RMSE
+MAPE
+測試集平均實際成本
+落在 ±3% 預測範圍比例
 
-由大到小排序。
+R² 顯示為百分比：
+
+{r2*100:.2f}%
+
+MAE：
+
+NT$ {:,.0f}
+
+RMSE：
+
+NT$ {:,.0f}
+
+MAPE：
+
+{:.2f}%
+
+計算：
+
+within_3pct_rate
+=
+result["是否落在±3%區間"].eq("是").mean() * 100
+
+==================================================
+【模型解說】
+==================================================
+
+輸出：
+
+R²：表示模型可以解釋多少比例的製造成本變化。
+
+MAE：表示每張工單平均相差多少金額。
+
+RMSE：對較大的預測誤差給予較高權重。
+
+MAPE：表示平均預測誤差占實際成本的百分比。
+
+±3% 預測範圍：以模型預測成本為中心，建立 -3% 至 +3% 的管理範圍。
+
+圖中橘色點代表落在 ±3% 範圍內；紅色點代表超出 ±3% 範圍，需優先檢視。
+
+==================================================
+【各變數對成本的影響程度】
+==================================================
+
+建立：
+
+coef_show
+
+欄位：
+
+變數
+標準化迴歸係數
+影響方向
+
+影響方向：
+
+係數 >= 0
+→ 正向
+
+係數 < 0
+→ 負向
+
+顯示時將：
+
+CNC加工工時_hr
+→ CNC加工工時(hr)
+
+組裝工時_hr
+→ 組裝工時(hr)
+
+測試工時_hr
+→ 測試工時(hr)
+
+換線工時_hr
+→ 換線工時(hr)
+
+標準化迴歸係數格式：
+
+"{:,.2f}"
+
+依係數絕對值大小使用淡米杏色階：
+
+ratio >= 0.75
+→ #F6D6B8
+
+ratio >= 0.50
+→ #FBE6D2
+
+ratio >= 0.25
+→ #FFF1E5
+
+其他
+→ #FFFDFC
+
+Header：
+
+#F7E3CF
+
+==================================================
+【迴歸係數方向說明】
+==================================================
+
+輸出：
+
+正係數：在其他變數固定下，該變數增加時，預測製造成本傾向增加。
+
+負係數：在其他變數固定下，該變數增加時，預測製造成本傾向降低。
+
+標準化迴歸係數主要用來比較各變數的影響方向與相對程度，
+不應直接解讀為因果關係。
+
+==================================================
+【±3% 預測範圍結果表】
+==================================================
 
 顯示欄位：
 
@@ -349,72 +675,219 @@ R² 請稱為：
 - 預測製造成本
 - 預測下限(-3%)
 - 預測上限(+3%)
-- 預測誤差
-- 絕對誤差
-- 誤差率(%)
+- 是否落在±3%區間
 
-金額顯示千分位。
+金額：
 
-誤差率顯示至小數第 2 位。
+"{:,.0f}"
 
-==================================================
-【STEP 16｜Coefficient Table】
-==================================================
+是否落在±3%區間：
 
-輸出多元線性迴歸係數表。
+是：
+background-color #EAF4E4
+文字 #3F3F3F
 
-欄位包含：
+否：
+background-color #F4CCCC
+文字 #8B0000
+font-weight bold
 
-- 特徵
-- 標準化迴歸係數
-- 影響方向
-- 影響程度
+Header：
 
-影響方向：
-
-係數 > 0
-→ 正向
-
-係數 < 0
-→ 負向
-
-影響程度：
-
-使用係數絕對值表示。
-
-說明時使用：
-
-「在其他條件相同下，該特徵與預測成本呈正向或負向關係。」
-
-不要將迴歸係數直接解釋為因果關係。
+#F7E8C9
 
 ==================================================
-【STEP 17｜Visualization Style】
+【預測誤差最大的 10 筆工單】
 ==================================================
 
-所有圖表使用：
+依：
 
-Matplotlib
+絕對誤差
 
-整體風格：
+由大到小排序。
 
-- 白色背景
-- 柔和暖色系
-- 企業簡潔風格
-- 圖表文字全部英文
-- 英文字體正常直立
-- 不使用斜體
-- 不使用深色背景
+取：
+
+head(10)
+
+顯示完整 top_error。
+
+格式：
+
+實際製造成本：
+"{:,.0f}"
+
+預測製造成本：
+"{:,.0f}"
+
+預測下限(-3%)：
+"{:,.0f}"
+
+預測上限(+3%)：
+"{:,.0f}"
+
+預測誤差：
+"{:,.0f}"
+
+絕對誤差：
+"{:,.0f}"
+
+誤差率(%)：
+"{:.2f}"
+
+誤差率色階：
+
+大於等於 top 10 的 75% quantile：
+淡紅底 #F4CCCC
+深紅字 #8B0000
+粗體
+
+大於等於 40% quantile：
+淡橘底 #FFF4E6
+
+其他：
+#FFFDFC
+
+Header：
+
+WARM_MINT
 
 ==================================================
-【STEP 18｜Actual vs Predicted】
+【CHART 1｜Actual vs Predicted】
 ==================================================
+
+figsize：
+
+(10, 6)
+
+將：
+
+y_test
+y_pred
+
+除以：
+
+1000
 
 建立：
 
-Actual vs Predicted Cost with ±3% Range
+y_test_k
+y_pred_k
 
-圖表。
+圖表金額單位使用：
+
+K NTD
+
+建立：
+
+within_3pct
+
+判斷：
+
+y_test >= y_pred * 0.97
+
+且：
+
+y_test <= y_pred * 1.03
+
+--------------------------------------------------
+【區間內資料點】
+--------------------------------------------------
+
+使用：
+
+plt.scatter
+
+資料：
+
+y_test_k[within_3pct]
+y_pred_k[within_3pct]
+
+設定：
+
+alpha=0.82
+s=62
+color=WARM_ORANGE
+edgecolors="white"
+linewidths=0.7
+label="Within ±3%"
+
+--------------------------------------------------
+【區間外資料點】
+--------------------------------------------------
+
+使用：
+
+plt.scatter
+
+資料：
+
+y_test_k[~within_3pct]
+y_pred_k[~within_3pct]
+
+設定：
+
+alpha=0.95
+s=78
+color="#D9534F"
+edgecolors="white"
+linewidths=0.9
+label="Outside ±3%"
+
+--------------------------------------------------
+【Perfect Prediction】
+--------------------------------------------------
+
+min_v：
+
+y_test_k 與 y_pred_k 的最小值
+
+max_v：
+
+y_test_k 與 y_pred_k 的最大值
+
+建立：
+
+y = x
+
+虛線。
+
+設定：
+
+linestyle="--"
+linewidth=2
+color=WARM_BLUE
+label="Perfect Prediction"
+
+--------------------------------------------------
+【±3% Prediction Range】
+--------------------------------------------------
+
+建立：
+
+x_band = np.linspace(min_v, max_v, 200)
+
+lower_band
+= x_band * 0.97
+
+upper_band
+= x_band * 1.03
+
+使用：
+
+plt.fill_between
+
+設定：
+
+alpha=0.18
+color=WARM_GREEN
+label="±3% Prediction Range"
+
+上下邊界再各畫一條：
+
+linestyle=":"
+linewidth=1.2
+color=WARM_GREEN
 
 X Axis：
 
@@ -424,294 +897,255 @@ Y Axis：
 
 Predicted Manufacturing Cost (K NTD)
 
-圖表金額全部先除以：
+Title：
 
-1000
-
-讓單位變成：
-
-K NTD
-
-不要顯示科學記號：
-
-1e6
-
-加入：
-
-Perfect Prediction
-
-藍色虛線。
-
-建立：
-
-±3% Prediction Range
-
-以淡綠色區域顯示。
-
-預測範圍：
-
-下限 = x × 0.97
-上限 = x × 1.03
-
-資料點顏色：
-
-落在 ±3% 範圍內：
-柔和橘色
-
-超出 ±3% 範圍：
-顯著紅色
-
-Legend：
-
-Within ±3%
-Outside ±3%
-Perfect Prediction
-±3% Prediction Range
-
-超出 ±3% 的資料點尺寸略大。
-
-X 軸與 Y 軸禁止使用科學記號。
-
-==================================================
-【STEP 19｜Manufacturing Cost Drivers】
-==================================================
-
-建立橫向長條圖：
-
-Manufacturing Cost Drivers
+Actual vs Predicted Cost with ±3% Range - {product_line_en}
 
 使用：
 
-barh
+ax.ticklabel_format(
+    style="plain",
+    axis="both",
+    useOffset=False
+)
 
-Y Axis：
+避免顯示科學記號。
 
-Feature
+==================================================
+【CHART 2｜Cost Drivers】
+==================================================
+
+將 coef_df 依：
+
+影響程度
+
+ascending=True
+
+排序。
+
+建立：
+
+標準化迴歸係數_KNTD
+=
+標準化迴歸係數 / 1000
+
+使用色票：
+
+[
+    "#A8C69F",
+    "#F2C6A0",
+    "#AFC8E6",
+    "#D7C4E8",
+    "#E8D58A",
+    "#C9D8B6",
+    "#E6B8AF",
+    "#B7D7D0",
+    "#F4D7B9"
+]
+
+figsize：
+
+(12, 6.5)
+
+使用：
+
+plt.barh
+
+Y：
+
+圖表英文名稱
+
+X：
+
+標準化迴歸係數_KNTD
+
+設定：
+
+edgecolor="#F7F2EC"
+linewidth=1.2
+height=0.62
+
+--------------------------------------------------
+【Value Labels】
+--------------------------------------------------
+
+coef_max_k：
+
+標準化迴歸係數_KNTD 絕對值最大值
+
+offset_k：
+
+0.02 × coef_max_k
+
+在每個 Bar 末端顯示：
+
+f"{value_k:,.0f}"
+
+正值：
+
+ha="left"
+
+負值：
+
+ha="right"
+
+--------------------------------------------------
+【X = 0】
+--------------------------------------------------
+
+加入：
+
+plt.axvline(
+    0,
+    linestyle="--",
+    linewidth=1.5,
+    color="#888888"
+)
+
+--------------------------------------------------
+【X 軸範圍】
+--------------------------------------------------
+
+x_min：
+
+min(最小係數, 0)
+
+x_max：
+
+max(最大係數, 0)
+
+pad：
+
+0.12 × max(abs(x_min), abs(x_max), 1)
+
+設定：
+
+plt.xlim(
+    x_min - pad,
+    x_max + pad
+)
 
 X Axis：
 
 Standardized Coefficient (K NTD)
 
-將標準化迴歸係數除以：
-
-1000
-
-轉換成：
-
-K NTD
-
-長條圖數值標籤也使用相同 K NTD 單位。
-
-圖表尺寸使用：
-
-figsize = (12, 6.5)
-
-長條高度約：
-
-0.62
-
-正向與負向係數使用不同柔和顏色。
-
-加入：
-
-x = 0
-
-垂直虛線。
-
-數值標籤顯示在每一條 Bar 的末端。
-
-X 軸範圍依實際係數最大值與最小值設定合理 padding。
-
-不要讓文字標籤把 X 軸撐大。
-
-不要顯示：
-
-1e6
-
-==================================================
-【STEP 20｜Prediction Error Distribution】
-==================================================
-
-建立：
-
-Prediction Error Distribution
-
-使用誤差率：
-
-誤差率(%)
-
-建立 Histogram。
-
-X Axis：
-
-Prediction Error Rate (%)
-
 Y Axis：
 
-Number of Jobs
+Feature
 
-使用柔和暖色。
+Title：
 
-==================================================
-【STEP 21｜Top 10 Error Visualization】
-==================================================
-
-建立：
-
-Top 10 Prediction Error Jobs
-
-顯示預測誤差最大的 10 筆工單。
-
-以：
-
-工單ID
-
-作為辨識。
-
-圖表必須容易比較：
-
-Actual Cost
-Predicted Cost
-
-金額圖表單位使用：
-
-K NTD
-
-不要顯示：
-
-1e6
-
-==================================================
-【STEP 22｜Teaching Explanation】
-==================================================
-
-在模型結果後輸出簡短說明：
-
-R²：
-表示模型可以解釋實際製造成本變異的比例。
-
-MAE：
-表示每筆工單平均預測誤差金額。
-
-RMSE：
-對較大的預測誤差給予較高權重。
-
-MAPE：
-表示平均預測誤差占實際成本的百分比。
-
-±3% 預測範圍：
-以模型預測成本為中心，
-建立 -3% 至 +3% 的管理範圍。
-
-圖中：
-
-橘色點
-代表落在 ±3% 範圍內。
-
-紅色點
-代表超出 ±3% 範圍，
-可作為後續優先檢視的工單。
-
-==================================================
-【表格顯示】
-==================================================
+Manufacturing Cost Drivers - {product_line_en}
 
 使用：
 
-pandas Styler
-
-表格：
-
-- 白色或非常淡背景
-- 深灰文字
-- Header 加粗
-- 有 Border
-- 適當 Padding
-- 不使用斜體
-
-金額格式：
-
-"{:,.0f}"
-
-百分比格式：
-
-"{:.2%}"
-
-工時：
-
-"{:.2f}"
+plt.gca().ticklabel_format(
+    style="plain",
+    axis="x",
+    useOffset=False
+)
 
 ==================================================
-【圖表英文 Feature 名稱】
+【CHART 3｜Error Distribution】
 ==================================================
 
-圖表中的 Feature 請使用簡潔英文名稱。
+figsize：
 
-例如：
+(10, 6)
 
-完工數量
-→ Production Qty
+使用：
 
-標準材料總成本
-→ Material Cost
+plt.hist
 
-標準人工總成本
-→ Labor Cost
+資料：
 
-標準委外總成本
-→ Outsourcing Cost
+result["誤差率(%)"]
 
-標準製造費總額
-→ Manufacturing OH
+bins：
 
-CNC加工工時_hr
-→ CNC Hours
+15
 
-組裝工時_hr
-→ Assembly Hours
+color：
 
-測試工時_hr
-→ Testing Hours
+#B7D7C4
 
-換線工時_hr
-→ Changeover Hours
+edgecolor：
 
-==================================================
-【程式結構】
-==================================================
+white
 
-請依序建立：
+linewidth：
 
-STEP 1｜Upload ERP Excel
-STEP 2｜Read ERP Sheets
-STEP 3｜Data Cleaning
-STEP 4｜Merge ERP Data
-STEP 5｜Product Line Selection
-STEP 6｜Feature Engineering
-STEP 7｜Regression Features
-STEP 8｜Train / Test Split
-STEP 9｜Standardization
-STEP 10｜Multiple Linear Regression
-STEP 11｜Model Evaluation
-STEP 12｜±3% Prediction Range
-STEP 13｜Prediction Result Table
-STEP 14｜Prediction Error
-STEP 15｜Top 10 Error Jobs
-STEP 16｜Coefficient Table
-STEP 17｜Actual vs Predicted Visualization
-STEP 18｜Manufacturing Cost Drivers
-STEP 19｜Prediction Error Distribution
-STEP 20｜Top 10 Error Visualization
-STEP 21｜Teaching Explanation
+1
+
+X Axis：
+
+Absolute Error Rate (%)
+
+Y Axis：
+
+Number of Work Orders
+
+Title：
+
+Prediction Error Distribution - {product_line_en}
+
+只顯示 Y 軸 Grid。
 
 ==================================================
-【最終輸出】
+【函數回傳】
+==================================================
+
+run_regression 最後 return：
+
+model, result, coef_df
+
+==================================================
+【STEP 7｜按鈕事件】
+==================================================
+
+建立：
+
+def on_run_clicked(b):
+
+使用：
+
+with output:
+
+clear_output(wait=True)
+
+取得：
+
+selected_line = product_dropdown.value
+
+執行：
+
+run_regression(selected_line)
+
+設定：
+
+run_button.on_click(on_run_clicked)
+
+最後輸出：
+
+請從上方選單選擇一個產品線，再按「執行多元回歸」。
+
+==================================================
+【最終輸出要求】
 ==================================================
 
 請一次完整輸出所有 Python Code。
 
-不要省略 import。
-不要省略任何 STEP。
-不要只提供修改片段。
+程式結構依序為：
+
+STEP 1. 上傳 YUNFA ERP Excel
+STEP 2. 讀取 ERP 資料表
+STEP 3. ERP 資料整合
+STEP 4. 定義 X 與 Y
+STEP 5. 產品線選單
+STEP 6. 多元回歸函數
+STEP 7. 按鈕事件
+
+所有表格、公式、圖表、色票、欄位名稱與參數，
+請依照以上規格產生。
 
 程式必須可直接在 Google Colab CPU 環境由上到下執行。
