@@ -71,8 +71,13 @@ excel_bytes.seek(0)
 order_df = pd.read_excel(excel_bytes, sheet_name="銷售訂單")
 
 print("\n【客戶主檔】")
+print("※ 程式已讀取整張「客戶主檔」工作表；以下僅顯示前 5 筆供資料檢視。")
+customer_display = customer_df.head().rename(
+    columns={"客戶等級": "既有客戶等級（ERP）"}
+).copy()
+
 display(
-    customer_df.head().style
+    customer_display.style
     .set_properties(**{
         "background-color": "#FFFDFC",
         "color": TEXT_DARK,
@@ -89,6 +94,7 @@ display(
 )
 
 print("\n【報價紀錄】")
+print("※ 程式已讀取整張「報價紀錄」工作表；以下僅顯示前 5 筆供資料檢視。")
 quote_display = quote_df.head().copy()
 quote_format = {}
 for c in ["預估毛利率", "折扣率"]:
@@ -114,8 +120,13 @@ display(
 )
 
 print("\n【銷售訂單】")
+print("※ 程式已讀取整張「銷售訂單」工作表；以下僅顯示前 5 筆供資料檢視。")
+order_display = order_df.head().rename(
+    columns={"客戶等級": "既有客戶等級（ERP）"}
+).copy()
+
 display(
-    order_df.head().style
+    order_display.style
     .set_properties(**{
         "background-color": "#FFFDFC",
         "color": TEXT_DARK,
@@ -201,6 +212,12 @@ customer_feature_df = (
     )
 )
 
+# 將 ERP 原有的人工管理標籤改名，明確與 K-Means 行為分群區隔
+if "客戶等級" in customer_feature_df.columns:
+    customer_feature_df = customer_feature_df.rename(
+        columns={"客戶等級": "既有客戶等級（ERP）"}
+    )
+
 # 缺值處理
 numeric_fill_zero = [
     "報價次數",
@@ -252,8 +269,10 @@ feature_desc = pd.DataFrame({
 })
 display(feature_desc)
 
-print("\n注意：客戶等級、產業別、銷售區域不直接放入 K-Means，")
-print("它們保留在分群完成後，用來解讀每一群的客戶輪廓。")
+print("\n【重要說明】")
+print("既有客戶等級（ERP）、產業別、銷售區域都不放入 K-Means。")
+print("K-Means 只根據 8 個實際交易／報價行為特徵進行無監督分群。")
+print("既有客戶等級（ERP）只在分群完成後用來對照，不參與分群計算。")
 
 
 # ============================================================
@@ -307,17 +326,17 @@ center_df = pd.DataFrame(
 remaining = set(range(N_CLUSTERS))
 cluster_name_map = {}
 
-# 1. 沉睡／流失風險：最近交易天數最高，且採購活躍度偏低
+# 1. 沉睡／流失風險型：最近交易天數最高，且採購活躍度偏低
 risk_score = (
     center_df["最近交易天數"]
     - 0.50 * center_df["年化採購金額_TWD"]
     - 0.50 * center_df["訂單次數"]
 )
 risk_cluster = risk_score.idxmax()
-cluster_name_map[risk_cluster] = "沉睡／流失風險"
+cluster_name_map[risk_cluster] = "沉睡／流失風險型"
 remaining.remove(risk_cluster)
 
-# 2. VIP 核心：採購金額、訂單次數、報價互動高，且最近有交易
+# 2. 高價值活躍型：採購金額、訂單次數、報價互動高，且最近有交易
 vip_score = (
     center_df["年化採購金額_TWD"]
     + center_df["訂單次數"]
@@ -325,38 +344,38 @@ vip_score = (
     - center_df["最近交易天數"]
 )
 vip_cluster = vip_score.loc[list(remaining)].idxmax()
-cluster_name_map[vip_cluster] = "VIP核心"
+cluster_name_map[vip_cluster] = "高價值活躍型"
 remaining.remove(vip_cluster)
 
-# 3. 價格敏感：折扣較高、毛利偏低
+# 3. 價格敏感型：折扣較高、毛利偏低
 price_score = (
     center_df["平均折扣率"]
     - center_df["平均預估毛利率"]
 )
 price_cluster = price_score.loc[list(remaining)].idxmax()
-cluster_name_map[price_cluster] = "價格敏感"
+cluster_name_map[price_cluster] = "價格敏感型"
 remaining.remove(price_cluster)
 
-# 4. 剩餘群組定義為成長潛力
+# 4. 剩餘群組定義為成長潛力型
 growth_cluster = list(remaining)[0]
-cluster_name_map[growth_cluster] = "成長潛力"
+cluster_name_map[growth_cluster] = "成長潛力型"
 
-customer_feature_df["客群名稱"] = (
+customer_feature_df["K-Means行為分群"] = (
     customer_feature_df["Cluster"].map(cluster_name_map)
 )
 
-cluster_order = ["VIP核心", "成長潛力", "價格敏感", "沉睡／流失風險"]
+cluster_order = ["高價值活躍型", "成長潛力型", "價格敏感型", "沉睡／流失風險型"]
 
 print("\n【各客群資料筆數】")
 cluster_count = (
-    customer_feature_df["客群名稱"]
+    customer_feature_df["K-Means行為分群"]
     .value_counts()
     .reindex(cluster_order)
     .fillna(0)
     .astype(int)
     .reset_index()
 )
-cluster_count.columns = ["客群名稱", "客戶數"]
+cluster_count.columns = ["K-Means行為分群", "客戶數"]
 
 display(
     cluster_count.style
@@ -381,7 +400,7 @@ display(
 # ============================================================
 profile_table = (
     customer_feature_df
-    .groupby("客群名稱")
+    .groupby("K-Means行為分群")
     .agg(
         客戶數=("客戶ID", "count"),
         年化採購金額_TWD=("年化採購金額_TWD", "mean"),
@@ -427,17 +446,52 @@ display(
 
 
 # ============================================================
-# STEP 10｜Customer Result Table
+# STEP 9-1｜ERP Existing Grade vs K-Means Behavioral Segment
+# ============================================================
+print("\n【既有客戶等級（ERP） vs K-Means 行為分群】")
+print("※ 此表只做分群後比較；既有客戶等級（ERP）沒有參與 K-Means 計算。")
+
+grade_compare = pd.crosstab(
+    customer_feature_df["既有客戶等級（ERP）"],
+    customer_feature_df["K-Means行為分群"]
+).reindex(
+    index=["VIP", "重要", "一般"],
+    columns=cluster_order,
+    fill_value=0
+)
+
+display(
+    grade_compare.style
+    .set_properties(**{
+        "background-color": "#FFFDFC",
+        "color": TEXT_DARK,
+        "border": "1px solid #E2DED8",
+        "padding": "6px"
+    })
+    .set_table_styles([
+        {"selector": "th", "props": [
+            ("background-color", "#F7E8C9"),
+            ("color", TEXT_DARK),
+            ("font-weight", "bold"),
+            ("font-style", "normal"),
+            ("border", "1px solid #E2D2B5")
+        ]}
+    ])
+)
+
+
+# ============================================================
+# STEP 10｜Customer Result Tables
 # ============================================================
 strategy_map = {
-    "VIP核心": "維持關係、優先服務、交叉銷售與長期合作",
-    "成長潛力": "提高成交率、增加產品組合與業務接觸",
-    "價格敏感": "管理折扣、檢查毛利、採差異化報價策略",
-    "沉睡／流失風險": "優先喚回、追蹤未成交原因與近期需求"
+    "高價值活躍型": "維持高互動、優先服務、交叉銷售與長期合作",
+    "成長潛力型": "提高成交率、增加產品組合與業務接觸",
+    "價格敏感型": "管理折扣、檢查毛利、採差異化報價策略",
+    "沉睡／流失風險型": "優先喚回、追蹤未成交原因與近期需求"
 }
 
 customer_feature_df["建議策略"] = (
-    customer_feature_df["客群名稱"].map(strategy_map)
+    customer_feature_df["K-Means行為分群"].map(strategy_map)
 )
 
 result_cols = [
@@ -445,7 +499,7 @@ result_cols = [
     "客戶名稱",
     "產業別",
     "銷售區域",
-    "客戶等級",
+    "既有客戶等級（ERP）",
     "年化採購金額_TWD",
     "訂單次數",
     "平均訂單金額_TWD",
@@ -454,7 +508,7 @@ result_cols = [
     "平均折扣率",
     "平均預估毛利率",
     "最近交易天數",
-    "客群名稱",
+    "K-Means行為分群",
     "建議策略"
 ]
 
@@ -463,22 +517,22 @@ customer_result = customer_feature_df[result_cols].copy()
 print("\n【客戶分群結果】")
 
 segment_table_colors = {
-    "VIP核心": {
+    "高價值活躍型": {
         "header": "#F7D8B5",
         "body": "#FFF8F1",
         "border": "#EBC9A4"
     },
-    "成長潛力": {
+    "成長潛力型": {
         "header": "#D9EAD3",
         "body": "#F7FBF5",
         "border": "#C6DDBF"
     },
-    "價格敏感": {
+    "價格敏感型": {
         "header": "#D9EAF7",
         "body": "#F5FAFD",
         "border": "#C8DCEA"
     },
-    "沉睡／流失風險": {
+    "沉睡／流失風險型": {
         "header": "#E7DDF2",
         "body": "#FAF7FD",
         "border": "#D5C8E5"
@@ -487,7 +541,7 @@ segment_table_colors = {
 
 for segment in cluster_order:
     segment_df = (
-        customer_result[customer_result["客群名稱"] == segment]
+        customer_result[customer_result["K-Means行為分群"] == segment]
         .sort_values("年化採購金額_TWD", ascending=False)
         .reset_index(drop=True)
     )
@@ -498,6 +552,7 @@ for segment in cluster_order:
 
     display(
         segment_df.style
+        .hide(axis="index")
         .format({
             "年化採購金額_TWD": "{:,.0f}",
             "平均訂單金額_TWD": "{:,.0f}",
@@ -508,7 +563,9 @@ for segment in cluster_order:
         .set_properties(**{
             "background-color": colors["body"],
             "color": TEXT_DARK,
-            "border-color": colors["border"]
+            "border": f"1px solid {colors['border']}",
+            "padding": "6px",
+            "font-style": "normal"
         })
         .set_table_styles([
             {"selector": "th", "props": [
@@ -534,21 +591,21 @@ X_pca = pca.fit_transform(X_scaled)
 plot_df = pd.DataFrame({
     "PC1": X_pca[:, 0],
     "PC2": X_pca[:, 1],
-    "ClusterName": customer_feature_df["客群名稱"].values
+    "ClusterName": customer_feature_df["K-Means行為分群"].values
 })
 
 name_en = {
-    "VIP核心": "Core VIP",
-    "成長潛力": "Growth Potential",
-    "價格敏感": "Price Sensitive",
-    "沉睡／流失風險": "Dormant / Churn Risk"
+    "高價值活躍型": "High-Value Active",
+    "成長潛力型": "Growth Potential",
+    "價格敏感型": "Price Sensitive",
+    "沉睡／流失風險型": "Dormant / Churn Risk"
 }
 
 color_map = {
-    "VIP核心": PALETTE[0],
-    "成長潛力": PALETTE[1],
-    "價格敏感": PALETTE[2],
-    "沉睡／流失風險": PALETTE[3]
+    "高價值活躍型": PALETTE[0],
+    "成長潛力型": PALETTE[1],
+    "價格敏感型": PALETTE[2],
+    "沉睡／流失風險型": PALETTE[3]
 }
 
 plt.figure(figsize=(11, 7))
@@ -586,7 +643,7 @@ plt.show()
 # STEP 12｜Cluster Size Visualization
 # ============================================================
 size_plot = (
-    customer_feature_df["客群名稱"]
+    customer_feature_df["K-Means行為分群"]
     .value_counts()
     .reindex(cluster_order)
 )
@@ -643,10 +700,10 @@ z_df = pd.DataFrame(
     X_scaled,
     columns=FEATURES
 )
-z_df["客群名稱"] = customer_feature_df["客群名稱"].values
+z_df["K-Means行為分群"] = customer_feature_df["K-Means行為分群"].values
 
 z_profile = (
-    z_df.groupby("客群名稱")[FEATURES]
+    z_df.groupby("K-Means行為分群")[FEATURES]
     .mean()
     .reindex(cluster_order)
 )
@@ -701,11 +758,12 @@ plt.show()
 # STEP 14｜AI Agent Decision Meaning
 # ============================================================
 print("\n【AI Agent 決策意義】")
-print("VIP核心：維持關係、優先服務、交叉銷售與長期合作。")
-print("成長潛力：提高成交率、增加產品組合與業務接觸。")
-print("價格敏感：管理折扣、檢查毛利，採差異化報價策略。")
-print("沉睡／流失風險：優先喚回，追蹤未成交原因與近期需求。")
+print("高價值活躍型：維持高互動、優先服務、交叉銷售與長期合作。")
+print("成長潛力型：提高成交率、增加產品組合與業務接觸。")
+print("價格敏感型：管理折扣、檢查毛利，採差異化報價策略。")
+print("沉睡／流失風險型：優先喚回，追蹤未成交原因與近期需求。")
 
-print("\nK-Means 的角色不是直接替企業做決策，")
-print("而是把具有相似交易行為的客戶自動聚集成群，")
-print("再提供給後續智慧看板與 AI Agent 作為差異化策略的依據。")
+print("\nK-Means 的角色不是沿用 ERP 既有客戶等級，也不是直接替企業做決策。")
+print("它只根據實際交易與報價行為，把相似客戶自動聚集成群。")
+print("分群完成後，再與既有客戶等級（ERP）進行比較，")
+print("提供後續智慧看板與 AI Agent 作為差異化客戶經營的依據。")
