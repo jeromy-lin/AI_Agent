@@ -1,0 +1,680 @@
+# ==============================================================================
+# YUNFA MES－Rule-Based Scheduling AI 智慧工單排程與生產優先順序分析
+# 執行環境：Google Colab CPU (Python 3.10+)
+# ==============================================================================
+
+# STEP 0: 環境套件安裝與載入
+!pip install -q openpyxl
+
+import sys
+import io
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from IPython.display import display, HTML
+
+# 設定圖表樣式與數據顯示
+plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+pd.set_option('display.max_columns', None)
+pd.set_option('display.max_rows', 100)
+pd.set_option('display.width', 1000)
+
+print("=== STEP 0: 環境套件載入完成 ===")
+
+# ==============================================================================
+# STEP 1: 上傳 Excel 檔案與工作表/欄位完整性驗證
+# ==============================================================================
+from google.colab import files
+
+print("\n請點擊上方按鈕選擇並上傳 YUNFA_MES.xlsx 檔案：")
+uploaded = files.upload()
+
+if not uploaded:
+    print("【錯誤】未上傳任何檔案，程式停止執行。")
+    sys.exit()
+
+file_name = next(iter(uploaded))
+excel_file = pd.ExcelFile(io.BytesIO(uploaded[file_name]))
+
+# 1.1 工作表存在性檢查
+required_sheets = ['機台主檔', '工藝路由主檔', '生產工單', '生產報工', '機台稼動日報', '品質異常']
+missing_sheets = [s for s in required_sheets if s not in excel_file.sheet_names]
+
+if missing_sheets:
+    print(f"\n【錯誤】Excel 檔案缺少必要工作表：{', '.join(missing_sheets)}")
+    sys.exit()
+
+# 讀取所有工作表
+sheets_df = {s: pd.read_excel(excel_file, sheet_name=s) for s in required_sheets}
+
+# 1.2 欄位完整性檢查
+req_cols = {
+    '生產工單': ['工單ID', 'SKU', '產品線', '計畫數量', '開單日期', '交期', '急單', '優先等級', '材料齊套', '品質風險', '狀態'],
+    '工藝路由主檔': ['SKU', '路由明細ID', '工序序號', '工序名稱', '需求工作中心', '標準換線工時_hr', '標準加工工時_hr每100件'],
+    '機台主檔': ['機台ID', '工作中心', '每日可用工時', '效率目標', '狀態']
+}
+
+missing_cols = []
+for sheet, cols in req_cols.items():
+    for c in cols:
+        if c not in sheets_df[sheet].columns:
+            missing_cols.append(f"【{sheet}】工作表缺少欄位：{c}")
+
+if missing_cols:
+    print("\n【錯誤】資料表欄位缺失，停止執行：")
+    for mc in missing_cols:
+        print(f"- {mc}")
+    sys.exit()
+
+print("\n--- 各工作表前 5 筆資料預覽 ---")
+for s_name in required_sheets:
+    print(f"\n▶ 工作表：{s_name}")
+    display(sheets_df[s_name].head(5))
+
+# ==============================================================================
+# STEP 2: 資料轉型、清理與狀態過濾
+# ==============================================================================
+df_wo = sheets_df['生產工單'].copy()
+df_routing = sheets_df['工藝路由主檔'].copy()
+df_machine = sheets_df['機台主檔'].copy()
+
+# 2.1 日期與數值轉型
+df_wo['開單日期'] = pd.to_datetime(df_wo['開單日期'], errors='coerce')
+df_wo['交期'] = pd.to_datetime(df_wo['交期'], errors='coerce')
+
+df_wo['計畫數量'] = pd.to_numeric(df_wo['計畫數量'], errors='coerce').fillna(0)
+df_routing['標準換線工時_hr'] = pd.to_numeric(df_routing['標準換線工時_hr'], errors='coerce').fillna(0.0)
+df_routing['標準加工工時_hr每100件'] = pd.to_numeric(df_routing['標準加工工時_hr每100件'], errors='coerce').fillna(0.0)
+df_machine['每日可用工時'] = pd.to_numeric(df_machine['每日可用工時'], errors='coerce').fillna(0.0)
+df_machine['效率目標'] = pd.to_numeric(df_machine['效率目標'], errors='coerce').fillna(0.0)
+
+# 2.2 客戶等級檢測
+if '客戶等級' not in df_wo.columns:
+    df_wo['客戶等級'] = '未設定'
+else:
+    df_wo['客戶等級'] = df_wo['客戶等級'].fillna('未設定')
+
+# 2.3 狀態過濾（排除已完工）
+total_wo_count = len(df_wo)
+completed_wo_count = (df_wo['狀態'].astype(str).str.strip() == '已完工').sum()
+df_uncompleted = df_wo[df_wo['狀態'].astype(str).str.strip() != '已完工'].copy()
+uncompleted_wo_count = len(df_uncompleted)
+
+print(f"\n=== 工單狀態統計 ===")
+print(f"總工單數：{total_wo_count} 筆")
+print(f"已完工數：{completed_wo_count} 筆")
+print(f"未完工數：{uncompleted_wo_count} 筆")
+print("未完工狀態明細：")
+print(df_uncompleted['狀態'].value_counts().to_string())
+
+# ==============================================================================
+# STEP 3: 排程基準日與距離交期天數計算
+# ==============================================================================
+valid_dates = df_uncompleted['開單日期'].dropna()
+if len(valid_dates) == 0:
+    PLANNING_DATE = pd.Timestamp.now().floor('D')
+else:
+    PLANNING_DATE = valid_dates.min()
+
+print(f"\n排程基準日 (PLANNING_DATE)：{PLANNING_DATE.strftime('%Y-%m-%d')}")
+
+# 計算距離交期天數 (交期缺失則填入 999)
+df_uncompleted['距離交期天數'] = (df_uncompleted['交期'] - PLANNING_DATE).dt.days
+df_uncompleted['距離交期天數'] = df_uncompleted['距離交期天數'].fillna(999).astype(int)
+
+# ==============================================================================
+# STEP 4: CNC 標準工時計算與路由對應
+# ==============================================================================
+# 篩選 CNC 工序
+df_cnc_routing = df_routing[df_routing['需求工作中心'].astype(str).str.upper() == 'CNC'].copy()
+
+cnc_sku_summary = df_cnc_routing.groupby('SKU').agg(
+    CNC工序數=('工序序號', 'count'),
+    CNC標準換線工時_hr=('標準換線工時_hr', 'sum'),
+    CNC標準加工工時_hr每100件=('標準加工工時_hr每100件', 'sum')
+).reset_index()
+
+# 串接至未完工工單
+df_uncompleted = pd.merge(df_uncompleted, cnc_sku_summary, on='SKU', how='left')
+
+# 判斷是否有 CNC 路由與缺失值補0
+df_uncompleted['具有CNC路由'] = df_uncompleted['CNC工序數'].notnull() & (df_uncompleted['CNC工序數'] > 0)
+df_uncompleted['CNC工序數'] = df_uncompleted['CNC工序數'].fillna(0).astype(int)
+df_uncompleted['CNC標準換線工時_hr'] = df_uncompleted['CNC標準換線工時_hr'].fillna(0.0)
+df_uncompleted['CNC標準加工工時_hr每100件'] = df_uncompleted['CNC標準加工工時_hr每100件'].fillna(0.0)
+
+# 計算工時
+df_uncompleted['CNC加工工時_hr'] = (df_uncompleted['CNC標準加工工時_hr每100件'] * df_uncompleted['計畫數量'] / 100.0).round(2)
+df_uncompleted['CNC排程總工時_hr'] = (df_uncompleted['CNC標準換線工時_hr'] + df_uncompleted['CNC加工工時_hr']).round(2)
+
+# ==============================================================================
+# STEP 5: Rule-Based Priority Score 評分機制
+# ==============================================================================
+def calc_urgent_score(val):
+    return 30 if str(val).strip() == '是' else 0
+
+def calc_due_score(days):
+    if days <= 1:
+        return 30
+    elif days <= 2:
+        return 25
+    elif days <= 4:
+        return 15
+    elif days <= 7:
+        return 5
+    else:
+        return 0
+
+def calc_cust_score(val):
+    v = str(val).strip().upper()
+    if v in ['VIP', 'VIP客戶']:
+        return 20
+    elif v in ['重要', '重要客戶']:
+        return 10
+    else:
+        return 0
+
+def calc_mat_score(val):
+    return 15 if str(val).strip() == '是' else -35
+
+def calc_prio_score(val):
+    v = str(val).strip()
+    if v == '高':
+        return 10
+    elif v == '中':
+        return 5
+    else:
+        return 0
+
+def calc_changeover_score(row):
+    if not row['具有CNC路由']:
+        return 0
+    hrs = row['CNC標準換線工時_hr']
+    if hrs <= 1.5:
+        return 10
+    elif hrs >= 3.5:
+        return -5
+    else:
+        return 0
+
+def calc_qual_score(val):
+    v = str(val).strip()
+    if v in ['高風險', '高']:
+        return -15
+    elif v in ['中風險', '中']:
+        return -5
+    else:
+        return 0
+
+df_uncompleted['急單分數'] = df_uncompleted['急單'].apply(calc_urgent_score)
+df_uncompleted['交期分數'] = df_uncompleted['距離交期天數'].apply(calc_due_score)
+df_uncompleted['客戶分數'] = df_uncompleted['客戶等級'].apply(calc_cust_score)
+df_uncompleted['材料分數'] = df_uncompleted['材料齊套'].apply(calc_mat_score)
+df_uncompleted['工單優先等級分數'] = df_uncompleted['優先等級'].apply(calc_prio_score)
+df_uncompleted['換線分數'] = df_uncompleted.apply(calc_changeover_score, axis=1)
+df_uncompleted['品質分數'] = df_uncompleted['品質風險'].apply(calc_qual_score)
+
+df_uncompleted['排程分數'] = (
+    df_uncompleted['急單分數'] +
+    df_uncompleted['交期分數'] +
+    df_uncompleted['客戶分數'] +
+    df_uncompleted['材料分數'] +
+    df_uncompleted['工單優先等級分數'] +
+    df_uncompleted['換線分數'] +
+    df_uncompleted['品質分數']
+)
+
+# ==============================================================================
+# STEP 6: 可立即排產篩選與規則說明
+# ==============================================================================
+def check_ready(row):
+    cond1 = str(row['材料齊套']).strip() == '是'
+    cond2 = str(row['品質風險']).strip() not in ['高風險', '高']
+    cond3 = bool(row['具有CNC路由'])
+    cond4 = pd.notnull(row['CNC排程總工時_hr']) and row['CNC排程總工時_hr'] > 0
+    return '是' if (cond1 and cond2 and cond3 and cond4) else '否'
+
+df_uncompleted['可立即排產'] = df_uncompleted.apply(check_ready, axis=1)
+
+def build_rule_desc(row):
+    parts = []
+    if row['急單分數'] > 0:
+        parts.append(f"急單 +{row['急單分數']}")
+    if row['交期分數'] > 0:
+        parts.append(f"交期壓力 +{row['交期分數']}")
+    if row['客戶分數'] > 0:
+        parts.append(f"客戶等級 +{row['客戶分數']}")
+    if row['材料分數'] != 0:
+        parts.append(f"材料狀態 {row['材料分數']:+d}")
+    if row['工單優先等級分數'] > 0:
+        parts.append(f"優先等級 +{row['工單優先等級分數']}")
+    if row['換線分數'] != 0:
+        parts.append(f"換線工時 {row['換線分數']:+d}")
+    if row['品質分數'] != 0:
+        parts.append(f"品質風險 {row['品質分數']:+d}")
+    return "；".join(parts) if parts else "基本評分"
+
+df_uncompleted['規則說明'] = df_uncompleted.apply(build_rule_desc, axis=1)
+
+# 子集分類
+df_ready = df_uncompleted[df_uncompleted['可立即排產'] == '是'].copy()
+df_pending_mat = df_uncompleted[df_uncompleted['材料齊套'].astype(str).str.strip() == '否'].copy()
+df_high_risk = df_uncompleted[df_uncompleted['品質風險'].astype(str).str.strip().isin(['高風險', '高'])].copy()
+
+# ==============================================================================
+# STEP 7: 未完工工單多重排序與排程順位
+# ==============================================================================
+df_sorted = df_uncompleted.sort_values(
+    by=['可立即排產', '排程分數', '距離交期天數', 'CNC標準換線工時_hr', '開單日期'],
+    ascending=[False, False, True, True, True]
+).reset_index(drop=True)
+
+df_sorted['排程順位'] = range(1, len(df_sorted) + 1)
+
+# ==============================================================================
+# STEP 8: CNC 負載平衡動態派工 (Rule-Based)
+# ==============================================================================
+cnc_machines = df_machine[df_machine['工作中心'].astype(str).str.upper() == 'CNC'].copy()
+if (cnc_machines['狀態'].astype(str).str.strip() == '可用').any():
+    cnc_machines = cnc_machines[cnc_machines['狀態'].astype(str).str.strip() == '可用'].copy()
+
+machine_ids = sorted(cnc_machines['機台ID'].tolist())
+
+# 可排產工單依 Rule-Based 順序派工
+df_ready_sorted = df_sorted[df_sorted['可立即排產'] == '是'].copy().reset_index(drop=True)
+df_ready_sorted['RuleBased順位'] = range(1, len(df_ready_sorted) + 1)
+
+machine_load_rb = {m: 0.0 for m in machine_ids}
+rb_assignments = []
+
+for idx, row in df_ready_sorted.iterrows():
+    min_m = min(machine_load_rb, key=machine_load_rb.get)
+    start_t = machine_load_rb[min_m]
+    dur = row['CNC排程總工時_hr']
+    end_t = start_t + dur
+    machine_load_rb[min_m] = end_t
+    
+    rb_assignments.append({
+        '工單ID': row['工單ID'],
+        'RuleBased_機台': min_m,
+        'RuleBased_開始工時': round(start_t, 2),
+        'RuleBased_排程總工時': round(dur, 2),
+        'RuleBased_完成工時': round(end_t, 2)
+    })
+
+df_rb_dispatch = pd.DataFrame(rb_assignments)
+df_ready_sorted = pd.merge(df_ready_sorted, df_rb_dispatch, on='工單ID', how='left')
+
+# ==============================================================================
+# STEP 9: FIFO Baseline 派工基準與比較
+# ==============================================================================
+df_fifo = df_ready_sorted.copy()
+df_fifo = df_fifo.sort_values(by=['開單日期', '工單ID'], ascending=[True, True]).reset_index(drop=True)
+df_fifo['FIFO順位'] = range(1, len(df_fifo) + 1)
+
+machine_load_fifo = {m: 0.0 for m in machine_ids}
+fifo_assignments = []
+
+for idx, row in df_fifo.iterrows():
+    min_m = min(machine_load_fifo, key=machine_load_fifo.get)
+    start_t = machine_load_fifo[min_m]
+    dur = row['CNC排程總工時_hr']
+    end_t = start_t + dur
+    machine_load_fifo[min_m] = end_t
+    
+    fifo_assignments.append({
+        '工單ID': row['工單ID'],
+        'FIFO_機台': min_m,
+        'FIFO_開始工時': round(start_t, 2),
+        'FIFO_排程總工時': round(dur, 2),
+        'FIFO_完成工時': round(end_t, 2)
+    })
+
+df_fifo_dispatch = pd.DataFrame(fifo_assignments)
+df_fifo = pd.merge(df_fifo, df_fifo_dispatch, on='工單ID', how='left')
+
+# 整合 FIFO 與 Rule-Based 工單順位比較
+df_comp_wo = pd.merge(
+    df_ready_sorted[['RuleBased順位', '工單ID', 'SKU', '急單', '客戶等級', '開單日期', '交期', '距離交期天數', '排程分數', 'RuleBased_機台', 'RuleBased_開始工時', 'RuleBased_完成工時']],
+    df_fifo[['工單ID', 'FIFO順位', 'FIFO_機台', 'FIFO_開始工時', 'FIFO_完成工時']],
+    on='工單ID',
+    how='left'
+)
+df_comp_wo['順位提前'] = df_comp_wo['FIFO順位'] - df_comp_wo['RuleBased順位']
+
+# ==============================================================================
+# STEP 10: 效益指標分析與度量
+# ==============================================================================
+def safe_improvement_rate(fifo_val, rb_val):
+    if fifo_val == 0 or pd.isna(fifo_val):
+        return 0.0
+    return round((fifo_val - rb_val) / fifo_val * 100.0, 2)
+
+urgent_wo = df_comp_wo[df_comp_wo['急單'].astype(str).str.strip() == '是']
+urgent_count = len(urgent_wo)
+urgent_fifo_avg = urgent_wo['FIFO順位'].mean() if urgent_count > 0 else 0.0
+urgent_rb_avg = urgent_wo['RuleBased順位'].mean() if urgent_count > 0 else 0.0
+
+vip_wo = df_comp_wo[df_comp_wo['客戶等級'].astype(str).str.strip().str.upper().isin(['VIP', 'VIP客戶'])]
+vip_count = len(vip_wo)
+vip_fifo_avg = vip_wo['FIFO順位'].mean() if vip_count > 0 else 0.0
+vip_rb_avg = vip_wo['RuleBased順位'].mean() if vip_count > 0 else 0.0
+
+makespan_fifo = max(machine_load_fifo.values()) if machine_load_fifo else 0.0
+makespan_rb = max(machine_load_rb.values()) if machine_load_rb else 0.0
+
+# 機台利用率計算
+df_mach_util = pd.DataFrame({'機台ID': machine_ids})
+df_mach_util['FIFO_累積工時_hr'] = df_mach_util['機台ID'].map(machine_load_fifo).round(2)
+df_mach_util['RuleBased_累積工時_hr'] = df_mach_util['機台ID'].map(machine_load_rb).round(2)
+
+df_mach_util['FIFO_機台利用率_%'] = (df_mach_util['FIFO_累積工時_hr'] / makespan_fifo * 100.0).round(1) if makespan_fifo > 0 else 0.0
+df_mach_util['RuleBased_機台利用率_%'] = (df_mach_util['RuleBased_累積工時_hr'] / makespan_rb * 100.0).round(1) if makespan_rb > 0 else 0.0
+df_mach_util['利用率百分點變化'] = (df_mach_util['RuleBased_機台利用率_%'] - df_mach_util['FIFO_機台利用率_%']).round(1)
+
+avg_util_fifo = df_mach_util['FIFO_機台利用率_%'].mean() if len(df_mach_util) > 0 else 0.0
+avg_util_rb = df_mach_util['RuleBased_機台利用率_%'].mean() if len(df_mach_util) > 0 else 0.0
+util_pct_diff = round(avg_util_rb - avg_util_fifo, 1)
+
+# 效益彙整表
+ready_count = len(df_ready)
+ready_ratio = round(ready_count / uncompleted_wo_count * 100.0, 1) if uncompleted_wo_count > 0 else 0.0
+pending_mat_count = len(df_pending_mat)
+pending_mat_ratio = round(pending_mat_count / uncompleted_wo_count * 100.0, 1) if uncompleted_wo_count > 0 else 0.0
+high_risk_count = len(df_high_risk)
+high_risk_ratio = round(high_risk_count / uncompleted_wo_count * 100.0, 1) if uncompleted_wo_count > 0 else 0.0
+
+df_efficiency = pd.DataFrame([
+    {'指標項目': '未完工總工單數', 'FIFO Baseline': str(uncompleted_wo_count), 'Rule-Based': str(uncompleted_wo_count), '差異 / 改善率': '-'},
+    {'指標項目': '可立即排產工單數 (比率)', 'FIFO Baseline': f"{ready_count} ({ready_ratio}%)", 'Rule-Based': f"{ready_count} ({ready_ratio}%)", '差異 / 改善率': '-'},
+    {'指標項目': '待料工單數 (比率)', 'FIFO Baseline': f"{pending_mat_count} ({pending_mat_ratio}%)", 'Rule-Based': f"{pending_mat_count} ({pending_mat_ratio}%)", '差異 / 改善率': '-'},
+    {'指標項目': '高品質風險工單數 (比率)', 'FIFO Baseline': f"{high_risk_count} ({high_risk_ratio}%)", 'Rule-Based': f"{high_risk_count} ({high_risk_ratio}%)", '差異 / 改善率': '-'},
+    {'指標項目': '急單平均派工順位', 'FIFO Baseline': round(urgent_fifo_avg, 2), 'Rule-Based': round(urgent_rb_avg, 2), '差異 / 改善率': f"{safe_improvement_rate(urgent_fifo_avg, urgent_rb_avg)}%"},
+    {'指標項目': 'VIP平均派工順位', 'FIFO Baseline': round(vip_fifo_avg, 2), 'Rule-Based': round(vip_rb_avg, 2), '差異 / 改善率': f"{safe_improvement_rate(vip_fifo_avg, vip_rb_avg)}%"},
+    {'指標項目': '總排程工期 Makespan (hr)', 'FIFO Baseline': round(makespan_fifo, 2), 'Rule-Based': round(makespan_rb, 2), '差異 / 改善率': f"{safe_improvement_rate(makespan_fifo, makespan_rb)}%"},
+    {'指標項目': '平均 CNC 利用率 (%)', 'FIFO Baseline': f"{round(avg_util_fifo, 1)}%", 'Rule-Based': f"{round(avg_util_rb, 1)}%", '差異 / 改善率': f"{util_pct_diff:+.1f} 百分點"}
+])
+
+# ==============================================================================
+# STEP 11: 輸出 11 張 Pandas Styler 表格
+# ==============================================================================
+def display_styled_table(df, title):
+    print(f"\n" + "="*80)
+    print(f"  {title}")
+    print("="*80)
+    
+    df_show = df.copy()
+    
+    # 格式化日期與數值欄位
+    for col in df_show.columns:
+        if pd.api.types.is_datetime64_any_dtype(df_show[col]):
+            df_show[col] = df_show[col].dt.strftime('%Y-%m-%d')
+    
+    df_clean = df_show.fillna("-")
+    
+    styler = df_clean.style.set_table_styles([
+        {'selector': 'th', 'props': [('background-color', '#2B4C7E'), ('color', '#FFFFFF'), ('font-weight', 'bold'), ('text-align', 'center'), ('padding', '8px'), ('font-size', '13px')]},
+        {'selector': 'td', 'props': [('text-align', 'center'), ('padding', '6px'), ('font-style', 'normal'), ('font-size', '12px')]},
+        {'selector': 'tr:nth-child(even)', 'props': [('background-color', '#F4F7FA')]},
+        {'selector': 'tr:nth-child(odd)', 'props': [('background-color', '#FFFFFF')]}
+    ]).hide(axis='index')
+    
+    display(styler)
+
+# 表格 1: MES未完工工單－前20筆
+t1_cols = ['工單ID', 'SKU', '產品線', '計畫數量', '開單日期', '交期', '急單', '優先等級', '材料齊套', '品質風險', '狀態']
+display_styled_table(df_uncompleted.head(20)[t1_cols], "表格 1: MES未完工工單－前20筆")
+
+# 表格 2: Rule-Based Scheduling規則表
+df_rules_spec = pd.DataFrame([
+    {'規則分類': '急單分數', '條件判定': '急單 ＝ 是', '加減分數': '+30', '說明': '急件處理優先'},
+    {'規則分類': '急單分數', '條件判定': '其他', '加減分數': '0', '說明': '一般處理'},
+    {'規則分類': '交期分數', '條件判定': '距離交期 ≤ 1 天', '加減分數': '+30', '說明': '極度緊急'},
+    {'規則分類': '交期分數', '條件判定': '距離交期 ≤ 2 天', '加減分數': '+25', '說明': '高交期壓力'},
+    {'規則分類': '交期分數', '條件判定': '距離交期 ≤ 4 天', '加減分數': '+15', '說明': '中交期壓力'},
+    {'規則分類': '交期分數', '條件判定': '距離交期 ≤ 7 天', '加減分數': '+5', '說明': '輕微交期壓力'},
+    {'規則分類': '交期分數', '條件判定': '距離交期 > 7 天', '加減分數': '0', '說明': '充裕交期'},
+    {'規則分類': '客戶分數', '條件判定': 'VIP / VIP客戶', '加減分數': '+20', '說明': '關鍵客戶權重'},
+    {'規則分類': '客戶分數', '條件判定': '重要 / 重要客戶', '加減分數': '+10', '說明': '重要客戶權重'},
+    {'規則分類': '客戶分數', '條件判定': '一般 / 未設定', '加減分數': '0', '說明': '標準權重'},
+    {'規則分類': '材料分數', '條件判定': '材料齊套 ＝ 是', '加減分數': '+15', '說明': '具備備料基礎'},
+    {'規則分類': '材料分數', '條件判定': '材料齊套 ＝ 否', '加減分數': '-35', '說明': '缺料嚴重扣分扣留'},
+    {'規則分類': '工單優先等級', '條件判定': '高', '加減分數': '+10', '說明': '廠內高優先'},
+    {'規則分類': '工單優先等級', '條件判定': '中', '加減分數': '+5', '說明': '廠內中優先'},
+    {'規則分類': '工單優先等級', '條件判定': '一般 / 低', '加減分數': '0', '說明': '標準等級'},
+    {'規則分類': '換線分數', '條件判定': 'CNC換線工時 ≤ 1.5 小時', '加減分數': '+10', '說明': '快速換線效益'},
+    {'規則分類': '換線分數', '條件判定': 'CNC換線工時 ≥ 3.5 小時', '加減分數': '-5', '說明': '換線耗時懲罰'},
+    {'規則分類': '品質分數', '條件判定': '高風險', '加減分數': '-15', '說明': '品質疑慮懲罰'},
+    {'規則分類': '品質分數', '條件判定': '中風險', '加減分數': '-5', '說明': '輕微品質關注'}
+])
+display_styled_table(df_rules_spec, "表格 2: Rule-Based Scheduling規則表")
+
+# 表格 3: 未完工工單完整優先排序－前30筆
+t3_cols = ['排程順位', '工單ID', 'SKU', '可領域排產', '排程分數', '距離交期天數', 'CNC標準換線工時_hr', 'CNC排程總工時_hr', '急單', '客戶等級', '材料齊套', '品質風險']
+df_t3 = df_sorted.rename(columns={'可立即排產': '可領域排產'})
+display_styled_table(df_t3.head(30)[t3_cols], "表格 3: 未完工工單完整優先排序－前30筆")
+
+# 表格 4: 今日優先生產Top 10
+t4_cols = ['RuleBased順位', '工單ID', 'SKU', '產品線', '計畫數量', '排程分數', '距離交期天數', 'CNC排程總工時_hr', 'RuleBased_機台', 'RuleBased_開始工時', 'RuleBased_完成工時']
+display_styled_table(df_ready_sorted.head(10)[t4_cols], "表格 4: 今日優先生產Top 10")
+
+# 表格 5: Top 10排程分數來源拆解
+t5_cols = ['RuleBased順位', '工單ID', 'SKU', '排程分數', '急單分數', '交期分數', '客戶分數', '材料分數', '工單優先等級分數', '換線分數', '品質分數']
+display_styled_table(df_ready_sorted.head(10)[t5_cols], "表格 5: Top 10排程分數來源拆解")
+
+# 表格 6: Top 10排程原因說明
+t6_cols = ['RuleBased順位', '工單ID', 'SKU', '排程分數', '規則說明']
+display_styled_table(df_ready_sorted.head(10)[t6_cols], "表格 6: Top 10排程原因說明")
+
+# 表格 7: 待料工單－前30筆
+t7_cols = ['工單ID', 'SKU', '計畫數量', '開單日期', '交期', '距離交期天數', '急單', '客戶等級', '品質風險', '排程分數']
+display_styled_table(df_pending_mat.head(30)[t7_cols], "表格 7: 待料工單－前30筆")
+
+# 表格 8: 高品質風險工單
+t8_cols = ['工單ID', 'SKU', '計畫數量', '開單日期', '交期', '距離交期天數', '急單', '客戶等級', '材料齊套', '品質風險', '排程分數']
+display_styled_table(df_high_risk[t8_cols], "表格 8: 高品質風險工單")
+
+# 表格 9: FIFO vs Rule-Based派工順位比較
+t9_cols = ['工單ID', 'SKU', '急單', '客戶等級', 'FIFO順位', 'RuleBased順位', '順位提前', 'FIFO_機台', 'RuleBased_機台', 'FIFO_完成工時', 'RuleBased_完成工時']
+display_styled_table(df_comp_wo[t9_cols], "表格 9: FIFO vs Rule-Based派工順位比較")
+
+# 表格 10: FIFO vs Rule-Based Scheduling效益分析表
+display_styled_table(df_efficiency, "表格 10: FIFO vs Rule-Based Scheduling效益分析表")
+
+# 表格 11: CNC機台利用率比較
+display_styled_table(df_mach_util, "表格 11: CNC機台利用率比較")
+
+# ==============================================================================
+# STEP 12: 輸出 6 張英文視覺化圖表
+# ==============================================================================
+fig_size = (13, 6.1)
+
+# 圖表 1: Top 15 Work Orders by Priority Score
+plt.figure(figsize=fig_size, facecolor='white')
+df_top15 = df_sorted.head(15).iloc[::-1]
+bars = plt.barh(df_top15['工單ID'], df_top15['排程分數'], color='#3B6D8C', edgecolor='none', height=0.65)
+plt.title('Top 15 Work Orders by Priority Score', fontsize=14, fontweight='bold', pad=15)
+plt.xlabel('Priority Score', fontsize=12)
+plt.ylabel('Work Order ID', fontsize=12)
+plt.grid(axis='x', linestyle='--', alpha=0.5)
+
+for bar in bars:
+    w = bar.get_width()
+    plt.text(w + 0.8, bar.get_y() + bar.get_height()/2, f'{int(w)}', va='center', ha='left', fontsize=10, fontweight='bold')
+
+plt.tight_layout()
+plt.show()
+
+# 圖表 2: MES Rule-Based CNC Production Schedule (Gantt Chart)
+plt.figure(figsize=fig_size, facecolor='white')
+colors = ['#4C72B0', '#55A868', '#C44E52', '#8172B0', '#CCB974', '#64B5CD', '#8C8C8C', '#E1974C', '#87ACE8', '#B0E0E6']
+
+y_pos = {m: i for i, m in enumerate(machine_ids)}
+plt.yticks(list(y_pos.values()), list(y_pos.keys()), fontsize=11, fontweight='bold')
+
+for idx, row in df_ready_sorted.iterrows():
+    m = row['RuleBased_機台']
+    st = row['RuleBased_開始工時']
+    dur = row['RuleBased_排程總工時']
+    wo = row['工單ID']
+    c = colors[idx % len(colors)]
+    
+    plt.barh(y_pos[m], dur, left=st, color=c, edgecolor='white', height=0.55, align='center')
+    if dur >= 1.5:
+        plt.text(st + dur/2, y_pos[m], wo, ha='center', va='center', color='white', fontsize=8, fontweight='bold')
+
+max_hr = int(makespan_rb) + 8
+for h in range(8, max_hr, 8):
+    plt.axvline(x=h, color='gray', linestyle='--', alpha=0.6, linewidth=1)
+
+plt.title('MES Rule-Based CNC Production Schedule', fontsize=14, fontweight='bold', pad=15)
+plt.xlabel('Scheduled CNC Hours', fontsize=12)
+plt.ylabel('CNC Machine', fontsize=12)
+plt.xlim(0, max_hr)
+plt.grid(axis='x', linestyle=':', alpha=0.4)
+plt.tight_layout()
+plt.show()
+
+# 圖表 3: CNC Utilization after Rule-Based Scheduling
+plt.figure(figsize=fig_size, facecolor='white')
+x = np.arange(len(machine_ids))
+width = 0.35
+
+plt.bar(x - width/2, df_mach_util['FIFO_機台利用率_%'], width, label='FIFO Baseline', color='#819CA9')
+plt.bar(x + width/2, df_mach_util['RuleBased_機台利用率_%'], width, label='Rule-Based AI', color='#2E6B9E')
+
+plt.title('CNC Utilization after Rule-Based Scheduling', fontsize=14, fontweight='bold', pad=15)
+plt.xlabel('CNC Machine', fontsize=12)
+plt.ylabel('Utilization Rate (%)', fontsize=12)
+plt.xticks(x, machine_ids, fontsize=11)
+plt.legend(frameon=True, facecolor='white', edgecolor='none')
+plt.grid(axis='y', linestyle='--', alpha=0.5)
+
+for i in range(len(machine_ids)):
+    v_f = df_mach_util['FIFO_機台利用率_%'].iloc[i]
+    v_r = df_mach_util['RuleBased_機台利用率_%'].iloc[i]
+    plt.text(x[i] - width/2, v_f + 1, f'{v_f}%', ha='center', va='bottom', fontsize=9)
+    plt.text(x[i] + width/2, v_r + 1, f'{v_r}%', ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+plt.ylim(0, max(100, df_mach_util['RuleBased_機台利用率_%'].max() + 15))
+plt.tight_layout()
+plt.show()
+
+# 圖表 4: FIFO vs Rule-Based Dispatch Priority
+plt.figure(figsize=fig_size, facecolor='white')
+top_n = df_comp_wo.head(15)
+x = np.arange(len(top_n))
+w = 0.35
+
+plt.bar(x - w/2, top_n['FIFO順位'], w, label='FIFO Rank', color='#D9822B')
+plt.bar(x + w/2, top_n['RuleBased順位'], w, label='Rule-Based Rank', color='#2B7A78')
+
+plt.title('FIFO vs Rule-Based Dispatch Priority (Top Ready Work Orders)', fontsize=14, fontweight='bold', pad=15)
+plt.xlabel('Work Order ID', fontsize=12)
+plt.ylabel('Dispatch Rank (Lower is Priority)', fontsize=12)
+plt.xticks(x, top_n['工單ID'], rotation=45, fontsize=10)
+plt.legend(frameon=True)
+plt.grid(axis='y', linestyle='--', alpha=0.5)
+
+for i in range(len(top_n)):
+    rf = top_n['FIFO順位'].iloc[i]
+    rr = top_n['RuleBased順位'].iloc[i]
+    plt.text(x[i] - w/2, rf + 0.2, f'{rf}', ha='center', va='bottom', fontsize=8)
+    plt.text(x[i] + w/2, rr + 0.2, f'{rr}', ha='center', va='bottom', fontsize=8, fontweight='bold')
+
+plt.tight_layout()
+plt.show()
+
+# 圖表 5: FIFO vs Rule-Based Scheduling Efficiency
+plt.figure(figsize=fig_size, facecolor='white')
+metrics_labels = ['Urgent Avg Rank', 'VIP Avg Rank', 'Makespan (hr)']
+fifo_vals = [urgent_fifo_avg, vip_fifo_avg, makespan_fifo]
+rb_vals = [urgent_rb_avg, vip_rb_avg, makespan_rb]
+
+x = np.arange(len(metrics_labels))
+w = 0.35
+
+plt.bar(x - w/2, fifo_vals, w, label='FIFO Baseline', color='#A2B9BC')
+plt.bar(x + w/2, rb_vals, w, label='Rule-Based AI', color='#2F4F4F')
+
+plt.title('FIFO vs Rule-Based Scheduling Efficiency Breakdown', fontsize=14, fontweight='bold', pad=15)
+plt.ylabel('Value (Lower Score / Hours is Better)', fontsize=12)
+plt.xticks(x, metrics_labels, fontsize=11, fontweight='bold')
+plt.legend(frameon=True)
+plt.grid(axis='y', linestyle='--', alpha=0.5)
+
+for i in range(len(metrics_labels)):
+    plt.text(x[i] - w/2, fifo_vals[i] + 0.5, f'{fifo_vals[i]:.1f}', ha='center', va='bottom', fontsize=10)
+    plt.text(x[i] + w/2, rb_vals[i] + 0.5, f'{rb_vals[i]:.1f}', ha='center', va='bottom', fontsize=10, fontweight='bold')
+
+plt.tight_layout()
+plt.show()
+
+# 圖表 6: MES Work Order Screening for Production Scheduling
+plt.figure(figsize=fig_size, facecolor='white')
+labels = ['Ready for Production', 'Pending Material', 'High Quality Risk']
+sizes = [ready_count, pending_mat_count, high_risk_count]
+colors_pie = ['#3CAEA3', '#F6D55C', '#ED553B']
+
+wedges, texts, autotexts = plt.pie(
+    sizes, 
+    labels=labels, 
+    autopct='%1.1f%%',
+    startangle=140, 
+    colors=colors_pie,
+    wedgeprops=dict(width=0.4, edgecolor='white', linewidth=2)
+)
+
+plt.setp(autotexts, size=11, weight="bold", color="black")
+plt.setp(texts, size=12)
+plt.title('MES Work Order Screening Breakdown', fontsize=14, fontweight='bold', pad=15)
+plt.tight_layout()
+plt.show()
+
+# ==============================================================================
+# STEP 13: AI Agent 管理摘要自動產生
+# ==============================================================================
+print("\n" + "="*80)
+print("  AI Agent 管理摘要 (Management Executive Summary)")
+print("="*80)
+
+print(f"""
+【工單現況與篩選分析】
+1. 未完工總工單數：{uncompleted_wo_count} 筆。
+2. 可立即排產工單：{ready_count} 筆 (占比 {ready_ratio}%)，已具備齊套材料、低品質風險與完整 CNC 路由。
+3. 待料工單：{pending_mat_count} 筆 (占比 {pending_mat_ratio}%)，因材料未齊套暫緩投產。
+4. 高品質風險工單：{high_risk_count} 筆 (占比 {high_risk_ratio}%)，需先進行品質管制確認。
+
+【排程效益比較分析 (Rule-Based vs. FIFO)】
+1. 急單優先處理：急單數共 {urgent_count} 筆。FIFO 平均順位為 {urgent_fifo_avg:.2f}，Rule-Based 提升至 {urgent_rb_avg:.2f} (改善率 {safe_improvement_rate(urgent_fifo_avg, urgent_rb_avg)}%)。
+2. VIP 客戶保障：VIP 工單數共 {vip_count} 筆。FIFO 平均順位為 {vip_fifo_avg:.2f}，Rule-Based 提升至 {vip_rb_avg:.2f} (改善率 {safe_improvement_rate(vip_fifo_avg, vip_rb_avg)}%)。
+3. 總生產工期 (Makespan)：FIFO 為 {makespan_fifo:.2f} 小時，Rule-Based 為 {makespan_rb:.2f} 小時 (變動率 {safe_improvement_rate(makespan_fifo, makespan_rb)}%)。
+4. CNC 設備平均利用率：FIFO 為 {avg_util_fifo:.1f}%，Rule-Based 為 {avg_util_rb:.1f}% (變化量 {util_pct_diff:+.1f} 百分點)。
+
+【AI Agent 智慧管理建議】
+1. 優先派工執行：立即投入排程分數前列之急單、交期緊迫與高優先等級工單，確保客戶交期與滿意度。
+2. 待料隔離與追蹤：待料工單 (共 {pending_mat_count} 筆) 嚴禁盲目投料，應由物料管理 Agent 持續追蹤採購到貨，齊套後動態重排。
+3. 品質管制攔截：高品質風險工單 (共 {high_risk_count} 筆) 應先由品保部門進行工程樣品檢驗或製程確認，排除疑慮後方可解鎖。
+4. 負載平衡派工：發揮動態最少累積工時派工機制，避免訂單過度集中於單一 CNC 機台造成瓶頸。
+5. MES 智慧轉型：未來將本 Rule-Based 核心串接 MES 即時報工 API，形成具備自適應校正能力的動態 AI 排程 Agent。
+""")
+
+# ==============================================================================
+# STEP 14: 輸出 5 份 UTF-8-SIG CSV 檔案
+# ==============================================================================
+print("=== STEP 14: 匯出 CSV 分析結果檔案 ===")
+
+csv_exports = {
+    'YUNFA_MES_RuleBased_完整優先排序.csv': df_sorted,
+    'YUNFA_MES_RuleBased_CNC排程結果.csv': df_ready_sorted,
+    'YUNFA_MES_FIFO_vs_RuleBased順位比較.csv': df_comp_wo,
+    'YUNFA_MES_RuleBased_效益分析.csv': df_efficiency,
+    'YUNFA_MES_CNC機台利用率比較.csv': df_mach_util
+}
+
+for fname, df_exp in csv_exports.items():
+    df_exp.to_csv(fname, index=False, encoding='utf-8-sig')
+    print(f"✔ 成功匯出檔案：{fname}")
+
+print("\n🎉 完整程序執行完畢！所有表格、圖表、摘要與 CSV 檔案皆已成功產生。")
