@@ -325,6 +325,17 @@ def run_regression(product_line):
 
     result["實際製造成本"] = y_test.values
     result["預測製造成本"] = y_pred
+
+    # ±3% 預測範圍
+    result["預測下限(-3%)"] = result["預測製造成本"] * 0.97
+    result["預測上限(+3%)"] = result["預測製造成本"] * 1.03
+    result["是否落在±3%區間"] = np.where(
+        (result["實際製造成本"] >= result["預測下限(-3%)"]) &
+        (result["實際製造成本"] <= result["預測上限(+3%)"]),
+        "是",
+        "否"
+    )
+
     result["預測誤差"] = (
         result["實際製造成本"] - result["預測製造成本"]
     )
@@ -363,8 +374,13 @@ def run_regression(product_line):
     print(f"R²                  ：{r2*100:.2f}%")
     print(f"MAE                 ：NT$ {mae:,.0f}")
     print(f"RMSE                ：NT$ {rmse:,.0f}")
+    within_3pct_rate = (
+        result["是否落在±3%區間"].eq("是").mean() * 100
+    )
+
     print(f"MAPE                ：{mape:.2f}%")
     print(f"測試集平均實際成本   ：NT$ {y_test.mean():,.0f}")
+    print(f"落在 ±3% 預測範圍比例：{within_3pct_rate:.2f}%")
     print("=" * 72)
 
     print("\n【模型解說】")
@@ -372,6 +388,8 @@ def run_regression(product_line):
     print("MAE：表示每張工單平均相差多少金額。")
     print("RMSE：對較大的預測誤差給予較高權重。")
     print("MAPE：表示平均預測誤差占實際成本的百分比。")
+    print("±3% 預測範圍：以模型預測成本為中心，建立 -3% 至 +3% 的管理範圍。")
+    print("圖中橘色點代表落在 ±3% 範圍內；紅色點代表超出 ±3% 範圍，需優先檢視。")
 
     # --------------------------------------------------------
     # 暖色系係數表
@@ -439,6 +457,49 @@ def run_regression(product_line):
     print("標準化迴歸係數主要用來比較各變數的影響方向與相對程度，")
     print("不應直接解讀為因果關係。")
 
+    print("\n【±3% 預測範圍結果】")
+    interval_show = result[
+        [
+            "工單ID",
+            "SKU",
+            "實際製造成本",
+            "預測製造成本",
+            "預測下限(-3%)",
+            "預測上限(+3%)",
+            "是否落在±3%區間"
+        ]
+    ].copy()
+
+    display(
+        interval_show.style
+        .format({
+            "實際製造成本": "{:,.0f}",
+            "預測製造成本": "{:,.0f}",
+            "預測下限(-3%)": "{:,.0f}",
+            "預測上限(+3%)": "{:,.0f}",
+        })
+        .map(
+            lambda v: (
+                "background-color: #EAF4E4; color: #3F3F3F"
+                if v == "是"
+                else "background-color: #F4CCCC; color: #8B0000; font-weight: bold"
+            ),
+            subset=["是否落在±3%區間"]
+        )
+        .set_properties(**{
+            "color": TEXT_DARK,
+            "border-color": "#E8DDD2"
+        })
+        .set_table_styles([
+            {"selector": "th", "props": [
+                ("background-color", "#F7E8C9"),
+                ("color", TEXT_DARK),
+                ("font-weight", "bold"),
+                ("border", "1px solid #E5D8BE")
+            ]}
+        ])
+    )
+
     print("\n【預測誤差最大的 10 筆工單】")
     top_error = (
         result.sort_values(
@@ -452,13 +513,15 @@ def run_regression(product_line):
         .format({
             "實際製造成本": "{:,.0f}",
             "預測製造成本": "{:,.0f}",
+            "預測下限(-3%)": "{:,.0f}",
+            "預測上限(+3%)": "{:,.0f}",
             "預測誤差": "{:,.0f}",
             "絕對誤差": "{:,.0f}",
             "誤差率(%)": "{:.2f}",
         })
         .map(
             lambda v: (
-                "background-color: #FDE9D9; color: #3F3F3F"
+                "background-color: #F4CCCC; color: #8B0000; font-weight: bold"
                 if v >= top_error["誤差率(%)"].quantile(0.75)
                 else "background-color: #FFF4E6; color: #3F3F3F"
                 if v >= top_error["誤差率(%)"].quantile(0.40)
@@ -485,18 +548,40 @@ def run_regression(product_line):
     # ========================================================
     plt.figure(figsize=(10, 6))
 
-    plt.scatter(
-        y_test,
-        y_pred,
-        alpha=0.78,
-        s=58,
-        color=WARM_ORANGE,
-        edgecolors="white",
-        linewidths=0.7
+    # 圖表金額統一轉成 K NTD（千元），避免出現 1e6 科學記號
+    y_test_k = y_test / 1000
+    y_pred_k = y_pred / 1000
+
+    # 依 ±3% 預測範圍區分準確與需關注的工單
+    within_3pct = (
+        (y_test >= y_pred * 0.97) &
+        (y_test <= y_pred * 1.03)
     )
 
-    min_v = min(y_test.min(), y_pred.min())
-    max_v = max(y_test.max(), y_pred.max())
+    plt.scatter(
+        y_test_k[within_3pct],
+        y_pred_k[within_3pct],
+        alpha=0.82,
+        s=62,
+        color=WARM_ORANGE,
+        edgecolors="white",
+        linewidths=0.7,
+        label="Within ±3%"
+    )
+
+    plt.scatter(
+        y_test_k[~within_3pct],
+        y_pred_k[~within_3pct],
+        alpha=0.95,
+        s=78,
+        color="#D9534F",
+        edgecolors="white",
+        linewidths=0.9,
+        label="Outside ±3%"
+    )
+
+    min_v = min(y_test_k.min(), y_pred_k.min())
+    max_v = max(y_test_k.max(), y_pred_k.max())
 
     plt.plot(
         [min_v, max_v],
@@ -507,14 +592,46 @@ def run_regression(product_line):
         label="Perfect Prediction"
     )
 
-    plt.xlabel("Actual Manufacturing Cost (TWD)")
-    plt.ylabel("Predicted Manufacturing Cost (TWD)")
+    # ±3% prediction range around the ideal prediction line
+    x_band = np.linspace(min_v, max_v, 200)
+    lower_band = x_band * 0.97
+    upper_band = x_band * 1.03
+
+    plt.fill_between(
+        x_band,
+        lower_band,
+        upper_band,
+        alpha=0.18,
+        color=WARM_GREEN,
+        label="±3% Prediction Range"
+    )
+
+    plt.plot(
+        x_band,
+        lower_band,
+        linestyle=":",
+        linewidth=1.2,
+        color=WARM_GREEN
+    )
+
+    plt.plot(
+        x_band,
+        upper_band,
+        linestyle=":",
+        linewidth=1.2,
+        color=WARM_GREEN
+    )
+
+    plt.xlabel("Actual Manufacturing Cost (K NTD)")
+    plt.ylabel("Predicted Manufacturing Cost (K NTD)")
     plt.title(
-        f"Actual vs Predicted Cost - {product_line_en}",
+        f"Actual vs Predicted Cost with ±3% Range - {product_line_en}",
         fontweight="bold"
     )
     plt.grid(True)
     plt.legend(frameon=False)
+    ax = plt.gca()
+    ax.ticklabel_format(style="plain", axis="both", useOffset=False)
     plt.tight_layout()
     plt.show()
 
@@ -525,6 +642,11 @@ def run_regression(product_line):
         "影響程度",
         ascending=True
     ).copy()
+
+    # 圖表係數以 K NTD 顯示，避免 1e6 科學記號
+    plot_coef["標準化迴歸係數_KNTD"] = (
+        plot_coef["標準化迴歸係數"] / 1000
+    )
 
     bar_colors = []
     warm_palette = [
@@ -542,24 +664,32 @@ def run_regression(product_line):
     for i in range(len(plot_coef)):
         bar_colors.append(warm_palette[i % len(warm_palette)])
 
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(12, 6.5))
     bars = plt.barh(
         plot_coef["圖表英文名稱"],
-        plot_coef["標準化迴歸係數"],
+        plot_coef["標準化迴歸係數_KNTD"],
         color=bar_colors,
         edgecolor="#F7F2EC",
         linewidth=1.2,
         height=0.62
     )
 
-    # Add subtle value labels to reduce the "solid block" feeling
-    for bar, value in zip(bars, plot_coef["標準化迴歸係數"]):
+    # Value labels use the same K NTD unit as the horizontal bars
+    coef_max_k = max(
+        plot_coef["標準化迴歸係數_KNTD"].abs().max(),
+        1
+    )
+    offset_k = 0.02 * coef_max_k
+
+    for bar, value_k in zip(
+        bars,
+        plot_coef["標準化迴歸係數_KNTD"]
+    ):
         x = bar.get_width()
-        offset = 0.012 * max(plot_coef["標準化迴歸係數"].abs().max(), 1)
         plt.text(
-            x + (offset if x >= 0 else -offset),
-            bar.get_y() + bar.get_height()/2,
-            f"{value:,.0f}",
+            x + (offset_k if x >= 0 else -offset_k),
+            bar.get_y() + bar.get_height() / 2,
+            f"{value_k:,.0f}",
             va="center",
             ha="left" if x >= 0 else "right",
             fontsize=9,
@@ -573,13 +703,20 @@ def run_regression(product_line):
         color="#888888"
     )
 
-    plt.xlabel("Standardized Coefficient")
+    # Keep a reasonable x-range so the horizontal bars remain visually large
+    x_min = min(plot_coef["標準化迴歸係數_KNTD"].min(), 0)
+    x_max = max(plot_coef["標準化迴歸係數_KNTD"].max(), 0)
+    pad = 0.12 * max(abs(x_min), abs(x_max), 1)
+    plt.xlim(x_min - pad, x_max + pad)
+
+    plt.xlabel("Standardized Coefficient (K NTD)")
     plt.ylabel("Feature")
     plt.title(
         f"Manufacturing Cost Drivers - {product_line_en}",
         fontweight="bold"
     )
     plt.grid(axis="x")
+    plt.gca().ticklabel_format(style="plain", axis="x", useOffset=False)
     plt.tight_layout()
     plt.show()
 
@@ -605,6 +742,11 @@ def run_regression(product_line):
     plt.tight_layout()
     plt.show()
 
+    print("\n【結果說明】")
+    print(
+        "圖表採用暖色系柔和配色，圖中文字維持英文；"
+        "表格與模型解說維持中文，方便課堂說明。"
+    )
 
     return model, result, coef_df
 
