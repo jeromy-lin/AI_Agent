@@ -11,41 +11,44 @@ YUNFA_MES.xlsx
 
 YUNFA MES－Isolation Forest 多來源、多變數製程異常偵測
 
-請注意：
 
-這不是重新設計一套新的 Isolation Forest 方法，
-而是依照以下既定規格重現固定分析流程。
+============================================================
+最重要規則｜必須精確重現既定 Golden Version
+============================================================
 
-請勿自行：
+本次不是重新設計 Isolation Forest 方法。
+
+請依照既定的：
+
+YUNFA_MES_IsolationForest.py
+
+資料處理、Feature Engineering、Historical Context、
+StandardScaler、Isolation Forest、Rule-Based、
+Anomaly Score、PCA 與結果呈現方式進行。
+
+不可自行：
 
 - 新增 Feature
 - 刪除 Feature
-- 更換 Feature
-- 修改年度
+- 改變 Feature 順序
+- 更換 Feature 公式
+- 改變歷史年度
+- 改變偵測年度
 - 修改 Isolation Forest 參數
-- 修改 Rule-Based 門檻
+- 修改 Rule-Based 指標
+- 修改 Rule Threshold 計算方式
+- 修改 Context Baseline 群組
+- 修改 Missing Value 處理方式
 - 修改 Anomaly Score 計算方式
-- 改變資料合併邏輯
+- 對資料額外 drop_duplicates
+- 對模型資料額外 dropna
+- 在模型建立前自行 sort_values
+- 改變 Merge Key
+- 將 2026 設備日資料放入模型
 
 分析單位固定為：
 
 工單 × 工序 × 機台 × 一次實際生產報工
-
-本案例重點是：
-
-傳統 Rule-Based 判斷單一指標是否超標，
-Isolation Forest 則分析多個製造指標的聯合行為。
-
-程式必須能自動產生：
-
-Rule Normal + IF 異常
-→ 多變數隱性異常
-
-並直接在結果表格的「方法對照」欄位中標註。
-
-不要另外建立一張「多變數隱性異常」獨立表格。
-
-最後一次輸出完整 Python Code。
 
 
 ============================================================
@@ -80,21 +83,20 @@ RANDOM_STATE = 42
 TOP_N = 15
 
 
-Isolation Forest 不可自行改參數。
+固定配色：
 
+TEXT_DARK = "#3F3F3F"
 
-圖表使用白色背景與柔和暖色系。
-
-建議 Palette：
-
-orange = #F2C6A0
-green = #A8C69F
-blue = #AFC8E6
-purple = #D7C4E8
-red = #D9534F
-gold = #E8D58A
-mint = #B7D7D0
-gray = #D9D9D9
+PALETTE = {
+    "orange": "#F2C6A0",
+    "green": "#A8C69F",
+    "blue": "#AFC8E6",
+    "purple": "#D7C4E8",
+    "red": "#D9534F",
+    "gold": "#E8D58A",
+    "mint": "#B7D7D0",
+    "gray": "#D9D9D9",
+}
 
 
 ============================================================
@@ -105,24 +107,15 @@ STEP 1｜Upload YUNFA MES Excel
 
 uploaded = files.upload()
 
-讓使用者上傳：
-
-YUNFA_MES.xlsx
-
-
 取得：
 
 file_name = next(iter(uploaded))
 
-並使用：
-
 excel_bytes = io.BytesIO(uploaded[file_name])
-
 
 顯示：
 
-已載入檔案：檔案名稱
-
+已載入檔案：{file_name}
 
 不可使用固定本機路徑。
 
@@ -133,38 +126,34 @@ STEP 2｜Read MES Sheets
 
 使用：
 
-pd.ExcelFile(excel_bytes)
+xls = pd.ExcelFile(excel_bytes)
 
-固定讀取以下 6 張 Sheet：
+固定檢查以下 6 張 Sheet：
 
-1. 機台主檔
-2. 工藝路由主檔
-3. 生產工單
-4. 生產報工
-5. 機台稼動日報
-6. 品質異常
+機台主檔
+工藝路由主檔
+生產工單
+生產報工
+機台稼動日報
+品質異常
 
 
 DataFrame 名稱固定：
 
-machine_df = 機台主檔
+machine_df = pd.read_excel(xls, sheet_name="機台主檔")
 
-route_df = 工藝路由主檔
+route_df = pd.read_excel(xls, sheet_name="工藝路由主檔")
 
-wo_df = 生產工單
+wo_df = pd.read_excel(xls, sheet_name="生產工單")
 
-report_df = 生產報工
+report_df = pd.read_excel(xls, sheet_name="生產報工")
 
-equip_df = 機台稼動日報
+equip_df = pd.read_excel(xls, sheet_name="機台稼動日報")
 
-quality_abn_df = 品質異常
+quality_abn_df = pd.read_excel(xls, sheet_name="品質異常")
 
 
-先檢查：
-
-required_sheets
-
-如果缺少必要 Sheet：
+若缺少必要 Sheet：
 
 raise ValueError
 
@@ -172,34 +161,30 @@ raise ValueError
 
 找不到必要 Sheet
 
-以及：
-
-目前 Excel 內 Sheet 名稱。
+以及目前 Excel Sheet 名稱。
 
 
-所有 Sheet 必須完整讀入。
+每張 Sheet：
 
-但畫面只顯示前 5 筆。
+完整讀取。
 
-每張表顯示：
+畫面只使用：
 
-「程式已讀取整張『Sheet 名稱』工作表；
-以下僅顯示前 5 筆供資料檢視。」
+df.head()
+
+顯示前 5 筆。
+
+請顯示：
+
+「程式已讀取整張工作表；以下僅顯示前 5 筆供資料檢視。」
 
 
-使用：
-
-df.head().style
-
-顯示。
-
-表格：
+使用 Pandas Styler：
 
 白底
 柔和暖色
-有框線
-有 padding
-中文字正常顯示。
+表格框線
+適當 padding
 
 
 ============================================================
@@ -210,27 +195,60 @@ STEP 3｜Data Cleaning
 
 to_num(df, cols)
 
-將指定欄位使用：
+
+使用：
 
 pd.to_numeric(..., errors="coerce")
 
 
-日期欄位使用：
-
-pd.to_datetime(..., errors="coerce")
+日期欄位固定如下。
 
 
 【生產報工】
-
-日期：
 
 計畫開始時間
 計畫結束時間
 實際開始時間
 實際結束時間
 
+使用：
 
-數值：
+pd.to_datetime(..., errors="coerce")
+
+
+【生產工單】
+
+開單日期
+計畫開工日期
+計畫完工日期
+交期
+實際開工日期
+實際完工日期
+
+
+【機台稼動日報】
+
+日期
+
+固定：
+
+pd.to_datetime(..., errors="coerce").dt.normalize()
+
+
+【工藝路由主檔】
+
+生效日期
+
+
+【品質異常】
+
+發現日期
+
+
+數值欄位固定如下。
+
+
+【生產報工】
 
 工序序號
 標準換線工時_hr
@@ -244,30 +262,14 @@ pd.to_datetime(..., errors="coerce")
 不良率
 
 
-【生產工單】
+【機台主檔】
 
-日期：
-
-開單日期
-計畫開工日期
-計畫完工日期
-交期
-實際開工日期
-實際完工日期
+每日可用工時
+效率目標
+設備年齡_年
 
 
 【機台稼動日報】
-
-日期：
-
-日期
-
-轉換後請使用：
-
-.dt.normalize()
-
-
-數值：
 
 可用工時_hr
 運轉工時_hr
@@ -279,68 +281,54 @@ OEE
 故障次數
 
 
-【機台主檔】
-
-數值：
-
-每日可用工時
-效率目標
-設備年齡_年
-
-
-【工藝路由主檔】
-
-生效日期
-
-
-【品質異常】
-
-發現日期
-
-
 ============================================================
 STEP 4｜Build Event-Level MES Dataset
 ============================================================
-
-分析單位固定：
-
-工單 × 工序 × 機台 × 一次實際生產報工
-
 
 建立：
 
 events = report_df.copy()
 
 
-------------------------------------------------------------
+分析單位固定：
+
+工單 × 工序 × 機台 × 一次實際生產報工
+
+
+============================================================
 STEP 4-1｜Merge 生產工單
-------------------------------------------------------------
+============================================================
 
-生產工單保留：
+wo_keep 固定為：
 
-工單ID
-產品線
+[
+    "工單ID",
+    "產品線",
+    "開單日期",
+    "計畫開工日期",
+    "計畫完工日期",
+    "交期",
+    "計畫數量",
+    "急單",
+    "優先等級",
+    "材料齊套",
+    "品質風險",
+    "狀態",
+]
+
+
+固定：
+
+events = events.merge(
+    wo_df[wo_keep],
+    on="工單ID",
+    how="left"
+)
+
+
+年度切分唯一依據：
+
 開單日期
-計畫開工日期
-計畫完工日期
-交期
-計畫數量
-急單
-優先等級
-材料齊套
-品質風險
-狀態
-
-
-以：
-
-工單ID
-
-進行：
-
-how="left"
-
-Merge。
 
 
 建立：
@@ -349,153 +337,173 @@ events["工單年度"] =
 events["開單日期"].dt.year
 
 
-年度切分必須使用：
+不可使用：
 
-生產工單的「開單日期」
-
-不可改用：
-
-報工日期
-實際完工日期
-計畫完工日期
+報工年份
+實際開始年份
+實際完工年份
+計畫完工年份
 
 
-------------------------------------------------------------
+============================================================
 STEP 4-2｜建立報工日期
-------------------------------------------------------------
+============================================================
 
-必須由：
+報工日期唯一來源：
 
 實際開始時間
 
-建立：
 
-events["報工日期"]
-
-
-公式：
+固定：
 
 events["報工日期"] =
 events["實際開始時間"].dt.normalize()
 
 
-不可假設「報工日期」原本就已存在。
+不可直接假設「報工日期」已存在。
 
 
-------------------------------------------------------------
+============================================================
 STEP 4-3｜Merge 機台主檔
-------------------------------------------------------------
+============================================================
 
-機台主檔保留：
+machine_keep 固定為：
 
-機台ID
-機台類型
-工作中心
-能力群組
-每日可用工時
-效率目標
-設備年齡_年
-狀態
+[
+    "機台ID",
+    "機台類型",
+    "工作中心",
+    "能力群組",
+    "每日可用工時",
+    "效率目標",
+    "設備年齡_年",
+    "狀態",
+]
 
 
 建立：
 
-machine_merge
+machine_merge =
+machine_df[machine_keep].copy()
 
 
-將機台主檔中的：
+機台主檔中的：
 
 工作中心
 
-重新命名：
+固定改名：
 
 機台工作中心
 
 
-再以：
+固定：
 
-機台ID
-
-how="left"
-
-與 events Merge。
-
-
-生產報工原本的「工作中心」必須保留。
+events = events.merge(
+    machine_merge,
+    on="機台ID",
+    how="left"
+)
 
 
-------------------------------------------------------------
+非常重要：
+
+生產報工原本的：
+
+工作中心
+
+必須保留。
+
+後續 Context Baseline 的 fallback 使用：
+
+events["工作中心"]
+
+不是：
+
+events["機台工作中心"]
+
+
+============================================================
 STEP 4-4｜Merge 機台稼動日報
-------------------------------------------------------------
+============================================================
 
-機台稼動日報保留：
+equip_keep 固定為：
 
-日期
-機台ID
-可用工時_hr
-運轉工時_hr
-換線工時_hr
-停機工時_hr
-稼動率
-品質良率
-OEE
-故障次數
+[
+    "日期",
+    "機台ID",
+    "可用工時_hr",
+    "運轉工時_hr",
+    "換線工時_hr",
+    "停機工時_hr",
+    "稼動率",
+    "品質良率",
+    "OEE",
+    "故障次數",
+]
 
 
 建立：
 
-equip_merge
+equip_merge = equip_df[equip_keep]
 
 
-重新命名：
+固定重新命名：
 
 日期
 → 報工日期
-
 
 停機工時_hr
 → 設備日停機工時_hr
 
 
-以：
+固定：
 
-["報工日期", "機台ID"]
-
-進行：
-
-how="left"
-
-Merge。
+events = events.merge(
+    equip_merge,
+    on=["報工日期", "機台ID"],
+    how="left"
+)
 
 
-注意：
+非常重要：
 
-生產報工本身的：
+不要額外：
+
+drop_duplicates()
+
+不要額外：
+
+groupby()
+
+不要額外：
+
+sort_values()
+
+
+請完全依照原始 Golden Version Merge。
+
+
+同時注意：
+
+生產報工的：
 
 停機工時_hr
 
-不可被機台稼動日報覆蓋。
+必須保留。
 
 
-機台稼動日報目前主要為 2026 資料。
+設備日的：
 
-因此：
+設備日停機工時_hr
 
-OEE
-稼動率
-品質良率
-故障次數
-
-只用於後續設備狀態解讀。
-
-不可加入 Isolation Forest FEATURES。
+是另一個不同欄位。
 
 
-------------------------------------------------------------
+============================================================
 STEP 4-5｜Merge 品質異常
-------------------------------------------------------------
+============================================================
 
-品質異常以：
+固定以：
 
 ["工單ID", "機台ID"]
 
@@ -512,35 +520,29 @@ GroupBy。
 受影響數量 sum
 
 
-再與 events：
+再：
 
 how="left"
 
-Merge。
+Merge 回 events。
 
 
-沒有紀錄者：
+最後：
 
-fillna(0)
+品質異常單數 fillna(0)
 
-
-品質異常只能作為：
-
-Post-hoc Validation
+品質異常影響數量 fillna(0)
 
 
-不可作為 Isolation Forest FEATURES。
+品質異常：
 
+不可進入 Isolation Forest Feature。
 
-最後顯示：
-
-生產報工原始筆數
-
-整合後事件筆數
+只作 Post-hoc Validation。
 
 
 ============================================================
-STEP 5｜Context-Aware Feature Engineering
+STEP 5｜Raw Manufacturing Indicators
 ============================================================
 
 建立：
@@ -548,103 +550,300 @@ STEP 5｜Context-Aware Feature Engineering
 safe_divide(a, b)
 
 
-使用：
+固定：
 
-pd.to_numeric(..., errors="coerce")
+a = pd.to_numeric(a, errors="coerce")
 
+b = pd.to_numeric(b, errors="coerce")
 
-分母為 0：
-
-改為 NaN。
-
-
-固定建立以下基本製造指標。
+return a / b.replace(0, np.nan)
 
 
-1.
+以下公式必須完全一致。
+
+
+============================================================
+指標 1｜換線超時率
+============================================================
+
+公式：
 
 換線超時率 =
 
 (實際換線工時_hr - 標準換線工時_hr)
-÷ 標準換線工時_hr
+÷
+標準換線工時_hr
 
 
-2.
+用途：
+
+Isolation Forest = YES
+
+Rule-Based = YES
+
+Context Source = YES
+
+
+Context 對應：
+
+換線情境偏差_Z
+
+
+Rule：
+
+HIGH
+Historical 95th percentile
+
+
+English：
+
+Setup Overrun
+
+
+============================================================
+指標 2｜加工超時率
+============================================================
+
+公式：
 
 加工超時率 =
 
 (實際加工工時_hr - 標準加工工時_hr)
-÷ 標準加工工時_hr
+÷
+標準加工工時_hr
 
 
-3.
+用途：
+
+Isolation Forest = YES
+
+Rule-Based = YES
+
+Context Source = YES
+
+
+Context：
+
+加工情境偏差_Z
+
+
+Rule：
+
+HIGH
+Historical 95th percentile
+
+
+English：
+
+Processing Overrun
+
+
+============================================================
+指標 3｜停機占比
+============================================================
+
+公式：
 
 停機占比 =
 
-停機工時_hr
-÷ 每日可用工時
+生產報工["停機工時_hr"]
+÷
+機台主檔["每日可用工時"]
 
 
-注意：
+非常重要：
 
-停機占比使用：
-
-生產報工的停機工時_hr
-
-不是：
+分子不可使用：
 
 設備日停機工時_hr
 
 
-4.
+分母不可使用：
+
+可用工時_hr
+
+
+正確來源只能是：
+
+生產報工停機工時_hr
+÷
+機台主檔每日可用工時
+
+
+用途：
+
+Isolation Forest = YES
+
+Rule-Based = YES
+
+Context Source = YES
+
+
+Context：
+
+停機情境偏差_Z
+
+
+Rule：
+
+HIGH
+Historical 95th percentile
+
+
+English：
+
+Downtime Ratio
+
+
+============================================================
+指標 4｜總產出數量
+============================================================
+
+公式：
 
 總產出數量 =
 
-良品數量
-+ 報廢數量
-+ 重工數量
+良品數量.fillna(0)
++
+報廢數量.fillna(0)
++
+重工數量.fillna(0)
 
 
-5.
+此變數：
+
+不是 Isolation Forest Feature。
+
+不是 Rule-Based Indicator。
+
+只用於計算：
+
+報廢率
+重工率
+
+
+============================================================
+指標 5｜報廢率
+============================================================
+
+公式：
 
 報廢率 =
 
 報廢數量
-÷ 總產出數量
+÷
+總產出數量
 
-NaN：
+
+最後：
 
 fillna(0)
 
 
-6.
+用途：
+
+Isolation Forest = YES
+
+Rule-Based = YES
+
+Context Source = YES
+
+
+Context：
+
+報廢情境偏差_Z
+
+
+Rule：
+
+HIGH
+Historical 95th percentile
+
+
+English：
+
+Scrap Rate
+
+
+============================================================
+指標 6｜重工率
+============================================================
+
+公式：
 
 重工率 =
 
 重工數量
-÷ 總產出數量
+÷
+總產出數量
 
-NaN：
+
+最後：
 
 fillna(0)
 
 
-7.
+用途：
+
+Isolation Forest = YES
+
+Rule-Based = YES
+
+Context Source = YES
+
+
+Context：
+
+重工情境偏差_Z
+
+
+Rule：
+
+HIGH
+Historical 95th percentile
+
+
+English：
+
+Rework Rate
+
+
+============================================================
+指標 7｜良品產出率_件每時
+============================================================
+
+公式：
 
 良品產出率_件每時 =
 
 良品數量
-÷ 實際加工工時_hr
+÷
+實際加工工時_hr
 
 
-不可自行修改上述公式。
+此欄位：
+
+不是 Isolation Forest 最終 Feature。
+
+不是 Rule-Based 直接指標。
+
+
+它唯一用於建立：
+
+產出效率偏差_Z
+
+
+也就是：
+
+良品產出率_件每時
+→ 產出效率偏差_Z
 
 
 ============================================================
-STEP 6｜Historical Context Baselines
+STEP 6｜Historical Context Baseline
 ============================================================
 
-建立：
+固定：
 
 history_mask =
 events["工單年度"].isin(
@@ -652,125 +851,184 @@ events["工單年度"].isin(
 )
 
 
-建立：
-
 detect_mask =
 events["工單年度"].eq(2026)
 
 
-如果沒有歷史資料：
+若歷史資料為 0：
 
 raise ValueError
 
 
-如果沒有 2026：
+若 2026 資料為 0：
 
-顯示目前可用年度，
-再 raise ValueError。
+列出 available_years
 
-
-建立：
-
-add_context_z()
+再 raise ValueError
 
 
-Context Baseline 邏輯必須固定。
+============================================================
+STEP 6-1｜add_context_z() 固定演算法
+============================================================
+
+函式參數：
+
+full_df
+history_df
+value_col
+primary_group
+fallback_group
+output_col
 
 
-Primary Group：
+歷史 Global：
+
+global_mean =
+history_df[value_col].mean()
+
+
+global_std =
+history_df[value_col].std()
+
+
+Primary Group 固定：
 
 ["SKU", "工序序號"]
 
 
-Fallback Group：
+Fallback Group 固定：
 
 ["工作中心"]
 
 
-首先由 2023–2025 歷史資料計算：
+先建立 Primary：
 
-Primary Group Mean
+groupby(primary_group)[value_col]
+.agg(["mean", "std"])
 
-Primary Group Std
+
+建立：
+
+_p_mean
+_p_std
+
+
+再建立 Fallback：
+
+groupby(fallback_group)[value_col]
+.agg(["mean", "std"])
+
+
+建立：
+
+_f_mean
+_f_std
+
+
+首先使用：
+
+_p_mean
+_p_std
+
+
+只有以下任一成立時才 fallback：
+
+mean_ref.isna()
+
+std_ref.isna()
+
+abs(std_ref) < 1e-9
+
+
+Fallback 到：
+
+_f_mean
+_f_std
+
+
+如果 fallback 後仍發生：
+
+mean_ref.isna()
+
+std_ref.isna()
+
+abs(std_ref) < 1e-9
+
+
+才使用：
+
+global_mean
+global_std
 
 
 若：
 
-mean 為 NaN
+global_std 為 NaN
 
-或
+或：
 
-std 為 NaN
-
-或
-
-abs(std) < 1e-9
+abs(global_std) < 1e-9
 
 
-才使用：
+固定：
 
-工作中心 Mean / Std
-
-
-若工作中心仍無法使用，
-
-才使用：
-
-全部 2023–2025 歷史資料
-
-global mean
-
-global std
+global_std = 1.0
 
 
-如果：
+Context Z：
 
-global std 為 NaN
-
-或
-
-abs(global std) < 1e-9
-
-則：
-
-global std = 1.0
-
-
-情境偏差公式：
-
-Z =
-
-(目前值 - 歷史參考平均)
-÷ 歷史參考標準差
+(目前值 - mean_ref)
+÷
+std_ref
 
 
 最後：
 
-inf
--inf
-
-轉為 NaN，
-
-再：
+replace([np.inf, -np.inf], np.nan)
 
 fillna(0)
 
 
-建立以下 6 個欄位：
+============================================================
+STEP 6-2｜六組 Context Mapping
+============================================================
 
-換線情境偏差_Z
-加工情境偏差_Z
-停機情境偏差_Z
-報廢情境偏差_Z
-重工情境偏差_Z
-產出效率偏差_Z
+必須一對一固定：
+
+
+換線超時率
+→ 換線情境偏差_Z
+
+
+加工超時率
+→ 加工情境偏差_Z
+
+
+停機占比
+→ 停機情境偏差_Z
+
+
+報廢率
+→ 報廢情境偏差_Z
+
+
+重工率
+→ 重工情境偏差_Z
+
+
+良品產出率_件每時
+→ 產出效率偏差_Z
+
+
+不得交換來源。
 
 
 ============================================================
-STEP 7｜Isolation Forest Features
+STEP 7｜Exact Isolation Forest FEATURES
 ============================================================
 
-FEATURES 必須完全固定為：
+FEATURES 必須完全固定，
+包含順序也不可改：
 
 FEATURES = [
     "換線超時率",
@@ -787,110 +1045,137 @@ FEATURES = [
 ]
 
 
-禁止：
+結構為：
 
-新增
-刪除
-重新排列
-替換
+5 個直接製程指標
++
+6 個 Context-Aware 指標
+=
+11 個 Features
 
-以上 FEATURES。
 
+注意：
+
+良品產出率_件每時
+
+不直接進入 FEATURES。
+
+
+============================================================
+STEP 7-1｜Exact English Mapping
+============================================================
+
+FEATURE_EN 固定：
+
+
+換線超時率
+→ Setup Overrun
+
+
+加工超時率
+→ Processing Overrun
+
+
+停機占比
+→ Downtime Ratio
+
+
+報廢率
+→ Scrap Rate
+
+
+重工率
+→ Rework Rate
+
+
+換線情境偏差_Z
+→ Context Setup Deviation
+
+
+加工情境偏差_Z
+→ Context Processing Deviation
+
+
+停機情境偏差_Z
+→ Context Downtime Deviation
+
+
+報廢情境偏差_Z
+→ Context Scrap Deviation
+
+
+重工情境偏差_Z
+→ Context Rework Deviation
+
+
+產出效率偏差_Z
+→ Throughput Deviation
+
+
+============================================================
+STEP 7-2｜Feature Description Table
+============================================================
 
 建立：
-
-FEATURE_EN
-
-
-固定：
-
-"換線超時率"
-→ "Setup Overrun"
-
-"加工超時率"
-→ "Processing Overrun"
-
-"停機占比"
-→ "Downtime Ratio"
-
-"報廢率"
-→ "Scrap Rate"
-
-"重工率"
-→ "Rework Rate"
-
-"換線情境偏差_Z"
-→ "Context Setup Deviation"
-
-"加工情境偏差_Z"
-→ "Context Processing Deviation"
-
-"停機情境偏差_Z"
-→ "Context Downtime Deviation"
-
-"報廢情境偏差_Z"
-→ "Context Scrap Deviation"
-
-"重工情境偏差_Z"
-→ "Context Rework Deviation"
-
-"產出效率偏差_Z"
-→ "Throughput Deviation"
-
-
-建立中文：
 
 feature_desc
 
 
-欄位：
-
-特徵說明表可使用：
+欄位固定：
 
 變數
 商業意義
 
 
-但請注意：
+商業意義固定：
 
-後面最高異常事件的 profile_df
-依正確版程式使用的欄位名稱是：
+換線超時率
+→ 實際換線時間相對標準值的超出比例
 
-「特徵」
+加工超時率
+→ 實際加工時間相對標準值的超出比例
 
-兩者是不同 DataFrame，
-不可混淆。
+停機占比
+→ 停機工時占機台每日可用工時比例
+
+報廢率
+→ 報廢數量占總產出比例
+
+重工率
+→ 重工數量占總產出比例
+
+換線情境偏差_Z
+→ 換線表現相對同 SKU / 工序歷史基準的偏差
+
+加工情境偏差_Z
+→ 加工表現相對同 SKU / 工序歷史基準的偏差
+
+停機情境偏差_Z
+→ 停機表現相對同 SKU / 工序歷史基準的偏差
+
+報廢情境偏差_Z
+→ 報廢表現相對同 SKU / 工序歷史基準的偏差
+
+重工情境偏差_Z
+→ 重工表現相對同 SKU / 工序歷史基準的偏差
+
+產出效率偏差_Z
+→ 每小時良品產出相對同 SKU / 工序歷史基準的偏差
 
 
 ============================================================
-STEP 7-1｜Missing Value Protection
+STEP 7-3｜Missing Value Protection
 ============================================================
 
-先處理：
+固定：
 
-events[FEATURES]
-
-
-將：
-
-np.inf
--np.inf
-
-轉成：
-
-np.nan
+events[FEATURES] = (
+    events[FEATURES]
+    .replace([np.inf, -np.inf], np.nan)
+)
 
 
-接著只使用：
-
-2023–2025
-
-計算：
-
-history_medians
-
-
-公式：
+只使用 2023–2025 建立：
 
 history_medians = (
     events.loc[history_mask, FEATURES]
@@ -898,7 +1183,7 @@ history_medians = (
 )
 
 
-再：
+再固定：
 
 events[FEATURES] = (
     events[FEATURES]
@@ -907,31 +1192,24 @@ events[FEATURES] = (
 )
 
 
-這個：
+非常重要：
 
-.fillna(0)
+不可使用 2026 Median。
 
-必須保留。
+不可先直接 fillna(0) 而跳過 historical median。
 
+不可用 SimpleImputer 取代。
 
-目的：
+不可 dropna。
 
-如果某個 Feature 的歷史 Median 本身仍為 NaN，
-最後仍要補成 0。
-
-
-不可使用：
-
-2026 Median
-
-進行補值。
+不可刪除事件。
 
 
 ============================================================
 STEP 8｜Timeline Split
 ============================================================
 
-建立：
+固定：
 
 train_df =
 events.loc[history_mask]
@@ -939,15 +1217,11 @@ events.loc[history_mask]
 .reset_index(drop=True)
 
 
-建立：
-
 detect_df =
 events.loc[detect_mask]
 .copy()
 .reset_index(drop=True)
 
-
-建立：
 
 X_train =
 train_df[FEATURES].copy()
@@ -957,59 +1231,51 @@ X_detect =
 detect_df[FEATURES].copy()
 
 
-顯示：
+不可使用：
 
-歷史基準年度
-歷史資料筆數
-偵測年度
-偵測資料筆數
+train_test_split
 
-
-不可：
-
-Random Train/Test Split
+不可 Random Split。
 
 
 ============================================================
 STEP 9｜Standardization
 ============================================================
 
-建立：
+固定：
 
 scaler = StandardScaler()
 
-
-只使用：
-
-X_train
-
-執行：
-
-fit_transform()
-
-
-建立：
 
 X_train_scaled =
 scaler.fit_transform(X_train)
 
 
-2026：
-
 X_detect_scaled =
 scaler.transform(X_detect)
 
 
-2026 不可參與：
+非常重要：
 
-scaler.fit()
+StandardScaler 只能 fit 2023–2025。
+
+
+2026：
+
+只能 transform。
+
+
+不要在 PCA 前重新建立另一個 scaler。
+
+
+不要重新 fit。
 
 
 ============================================================
 STEP 10｜Isolation Forest
 ============================================================
 
-Isolation Forest 參數完全固定：
+固定：
 
 iso = IsolationForest(
     n_estimators=400,
@@ -1020,16 +1286,9 @@ iso = IsolationForest(
 )
 
 
-使用：
+固定：
 
 iso.fit(X_train_scaled)
-
-
-只使用：
-
-2023–2025
-
-建立模型。
 
 
 建立：
@@ -1038,22 +1297,8 @@ train_score_raw =
 -iso.score_samples(X_train_scaled)
 
 
-建立：
-
 detect_score_raw =
 -iso.score_samples(X_detect_scaled)
-
-
-IF 判定：
-
-iso.predict(X_detect_scaled) == -1
-
-→ 異常
-
-
-其他：
-
-→ 正常
 
 
 建立：
@@ -1061,16 +1306,24 @@ iso.predict(X_detect_scaled) == -1
 detect_df["IF判定"]
 
 
+判定固定：
+
+iso.predict(X_detect_scaled) == -1
+→ 異常
+
+
+其他：
+→ 正常
+
+
 ============================================================
 STEP 10-1｜Anomaly Score
 ============================================================
 
-Anomaly Score 必須使用：
-
-Historical Percentile
+Anomaly Score 必須完全使用歷史 Percentile。
 
 
-建立：
+固定：
 
 sorted_train_scores =
 np.sort(train_score_raw)
@@ -1078,262 +1331,314 @@ np.sort(train_score_raw)
 
 2026 每筆：
 
-Anomaly Score =
-
-100
-×
+100.0
+*
 np.searchsorted(
     sorted_train_scores,
-    detect score,
+    score,
     side="right"
 )
-÷
+/
 len(sorted_train_scores)
 
 
-不可改成：
+不得使用：
 
-Min-Max Scaling
+MinMaxScaler
 
-不可改成：
+decision_function percentile
 
-decision_function
+rank percentage
 
-
-Anomaly Score 越接近：
-
-100
-
-代表相對歷史製造行為越少見。
+2026 自身 percentile
 
 
-建立：
+============================================================
+STEP 10-2｜Anomaly Rank
+============================================================
 
-Anomaly Rank
+固定：
+
+detect_df["Anomaly Rank"] = (
+    detect_df["Anomaly Score"]
+    .rank(
+        method="first",
+        ascending=False
+    )
+    .astype(int)
+)
 
 
-以：
+============================================================
+STEP 10-3｜異常層級
+============================================================
 
-Anomaly Score
-
-由高到低。
-
-
-建立：
-
-異常層級
-
+固定：
 
 IF判定 == "異常"
-
 → High Anomaly
 
 
 否則：
 
 Anomaly Score >= 95
-
 → Review
 
 
 其他：
 
-→ Normal
-
-
-============================================================
-STEP 11｜Rule-Based Baseline
-============================================================
-
-傳統 Rule-Based 使用以下 6 個指標：
-
-1. 換線超時率
-2. 加工超時率
-3. 停機占比
-4. 報廢率
-5. 重工率
-6. 產出效率偏差_Z
-
-
-門檻只使用：
-
-train_df
-
-也就是：
-
-2023–2025。
-
-
-固定：
-
-換線超時率：
-95th percentile
-
-加工超時率：
-95th percentile
-
-停機占比：
-95th percentile
-
-報廢率：
-95th percentile
-
-重工率：
-95th percentile
-
-產出效率偏差_Z：
-5th percentile
-
-
-前五個屬於：
-
-high
-
-
-判斷：
-
-2026 value > historical threshold
-
-
-產出效率偏差_Z：
-
-low
-
-
-判斷：
-
-2026 value < historical threshold
-
-
-建立：
-
-rule_flags
-
-
-建立：
-
-Rule Flag Count =
-rule_flags.sum(axis=1)
-
-
-Rule Flag Count >= 1
-
-→ Rule判定 = Warning
-
-
-否則：
-
-→ Rule判定 = Normal
-
-
-============================================================
-STEP 11-1｜方法對照與多變數隱性異常標註
-============================================================
-
-這一步非常重要。
-
-程式必須建立：
-
-detect_df["方法對照"]
-
-
-而不是只在文字說明中提到。
-
-
-請使用：
-
-np.select()
-
-
-固定判斷：
-
-
-Rule判定 == "Warning"
-AND
-IF判定 == "異常"
-
-→ 共同警示
-
-
-Rule判定 == "Normal"
-AND
-IF判定 == "異常"
-
-→ 多變數隱性異常
-
-
-Rule判定 == "Warning"
-AND
-IF判定 == "正常"
-
-→ 單變數規則警示
-
-
-其餘：
-
-Rule判定 == "Normal"
-AND
-IF判定 == "正常"
-
-→ 共同正常
+Normal
 
 
 注意：
 
-「多變數隱性異常」
-
-必須由程式模型判定結果自動產生。
-
-不可：
-
-指定某個工單
-硬編碼某個工單ID
-手動指定 WO00830
+Review 不等於 IF 異常。
 
 
-正確概念為：
+只有：
 
-Rule-Based 認為每一個單項指標都沒有超過警戒門檻，
+IF判定 == "異常"
 
-但 Isolation Forest 根據多個指標的聯合行為，
-
-仍判定該事件相對歷史資料不尋常。
+才是真正 Isolation Forest 異常。
 
 
-因此：
+============================================================
+STEP 11｜Exact Rule-Based Baseline
+============================================================
 
-Rule Normal + IF 異常
+Rule-Based 只使用 6 個指標。
 
-必須自動標註：
-
-多變數隱性異常
+不可把 11 個 Features 全部做 Rule。
 
 
-不需要另外建立一張
-「多變數隱性異常事件」獨立表格。
+固定：
 
-直接在後面的：
+rule_specs = {
 
-Top 15 MES 異常事件表
+    "換線超時率":
+    ("high", 0.95),
 
-使用：
+    "加工超時率":
+    ("high", 0.95),
 
-方法對照
+    "停機占比":
+    ("high", 0.95),
 
-欄位呈現即可。
+    "報廢率":
+    ("high", 0.95),
+
+    "重工率":
+    ("high", 0.95),
+
+    "產出效率偏差_Z":
+    ("low", 0.05),
+
+}
+
+
+============================================================
+Rule 1｜換線超時率
+============================================================
+
+Threshold：
+
+train_df["換線超時率"].quantile(0.95)
+
+判定：
+
+2026 value > threshold
+
+才 Flag。
+
+
+不是 >=。
+
+
+============================================================
+Rule 2｜加工超時率
+============================================================
+
+Threshold：
+
+train_df["加工超時率"].quantile(0.95)
+
+判定：
+
+2026 value > threshold
+
+
+============================================================
+Rule 3｜停機占比
+============================================================
+
+Threshold：
+
+train_df["停機占比"].quantile(0.95)
+
+判定：
+
+2026 value > threshold
+
+
+============================================================
+Rule 4｜報廢率
+============================================================
+
+Threshold：
+
+train_df["報廢率"].quantile(0.95)
+
+判定：
+
+2026 value > threshold
+
+
+============================================================
+Rule 5｜重工率
+============================================================
+
+Threshold：
+
+train_df["重工率"].quantile(0.95)
+
+判定：
+
+2026 value > threshold
+
+
+============================================================
+Rule 6｜產出效率偏差_Z
+============================================================
+
+Threshold：
+
+train_df["產出效率偏差_Z"].quantile(0.05)
+
+方向：
+
+LOW
+
+
+判定：
+
+2026 value < threshold
+
+才 Flag。
+
+
+不是 <=。
+
+
+============================================================
+STEP 11-1｜Rule Flag Count
+============================================================
+
+建立：
+
+rule_flags = pd.DataFrame(
+    index=detect_df.index
+)
+
+
+六個 Rule Boolean 分別建立。
+
+
+固定：
+
+detect_df["Rule Flag Count"] =
+rule_flags.sum(axis=1)
+
+
+固定：
+
+Rule Flag Count >= 1
+→ Warning
+
+
+Rule Flag Count == 0
+→ Normal
+
+
+============================================================
+STEP 11-2｜方法對照
+============================================================
+
+建立：
+
+detect_df["方法對照"]
+
+
+固定四種：
+
+
+Rule Warning
++
+IF 異常
+
+→ 共同警示
+
+
+Rule Normal
++
+IF 異常
+
+→ 多變數隱性異常
+
+
+Rule Warning
++
+IF 正常
+
+→ 單變數規則警示
+
+
+Rule Normal
++
+IF 正常
+
+→ 共同正常
+
+
+必須使用：
+
+Rule判定
+
+與：
+
+IF判定
+
+
+不可用：
+
+Anomaly Score >= 95
+
+取代 IF判定。
 
 
 ============================================================
 STEP 12｜2026 Equipment Context
 ============================================================
 
-將：
+以下為設備後續情境：
 
 OEE
 稼動率
 品質良率
+故障次數
 
-轉為 numeric。
+
+它們：
+
+不進 Isolation Forest
+
+不進 Rule-Based
+
+不進 StandardScaler
+
+不進 Historical Context
+
+
+只作 2026 結果解讀。
 
 
 建立：
@@ -1341,33 +1646,30 @@ OEE
 設備日資料可用
 
 
-如果：
+若：
 
 OEE.notna()
 
 → 是
-
 
 否則：
 
 → 否
 
 
-這些設備日資訊只用於：
-
-2026 異常事件後續解讀。
-
-
 ============================================================
-STEP 13｜Post-hoc Validation
+STEP 13｜Quality Post-hoc Validation
 ============================================================
+
+品質異常不參與模型。
+
 
 建立：
 
 有品質異常紀錄
 
 
-如果：
+若：
 
 品質異常單數 > 0
 
@@ -1379,195 +1681,144 @@ STEP 13｜Post-hoc Validation
 → 否
 
 
-品質異常資料不可重新加入：
-
-Isolation Forest FEATURES。
-
-
 計算：
 
-IF判定 == 異常
+IF判定 == "異常"
 
-的事件中，
+事件中：
 
-有品質異常紀錄 == 是
+有品質異常紀錄 == "是"
 
-所占比例。
+的比例。
 
 
 ============================================================
 STEP 14｜Model Summary
 ============================================================
 
-輸出：
+顯示：
 
-============================================================
 YUNFA MES－Isolation Forest 多來源製程異常偵測
-============================================================
 
 
-包含：
+內容：
 
 歷史基準年度
-
 偵測年度
-
 歷史基準事件數
-
 2026 偵測事件數
-
 Isolation Forest contamination
-
 模型判定異常事件數
-
 多變數隱性異常事件數
-
 異常事件具有品質異常紀錄比例
 
 
-其中：
-
-多變數隱性異常事件數
-
-必須由：
+多變數隱性異常事件數固定由：
 
 detect_df["方法對照"]
 .eq("多變數隱性異常")
 .sum()
 
-自動計算。
-
-
-顯示分析意義：
-
-分析單位為：
-
-工單 × 工序 × 機台 × 一次實際生產報工。
-
-
-2023–2025：
-
-建立歷史製造行為基準。
-
-
-2026：
-
-作為異常偵測對象。
-
-
-Isolation Forest：
-
-同時分析工時、停機、報廢、重工與同類製程歷史偏差。
-
-
-機台稼動日報與品質異常：
-
-僅用於結果解讀與事後驗證。
+計算。
 
 
 ============================================================
-STEP 15｜Top 15 MES Anomaly Events
+STEP 15｜Top 15 MES Anomaly Table
 ============================================================
 
-將：
+固定排序：
 
-detect_df
-
-依：
-
-Anomaly Score
-
-以及：
-
-Rule Flag Count
-
-排序。
-
-
-排序方式：
-
-Anomaly Score：
-descending
-
-Rule Flag Count：
-descending
+detect_df.sort_values(
+    ["Anomaly Score", "Rule Flag Count"],
+    ascending=[False, False]
+)
 
 
 取：
 
-TOP_N = 15
+head(15)
 
 
-建立：
-
-top_anomaly
-
-
-表格欄位：
+表格固定顯示：
 
 報工ID
-
 工單ID
-
 SKU
-
 工序序號
-
 工序名稱
-
 工作中心
-
 機台ID
 
 Anomaly Score
-
 Anomaly Rank
-
 異常層級
 
 Rule Flag Count
-
 Rule判定
-
 IF判定
-
 方法對照
 
 換線超時率
-
 加工超時率
-
 停機占比
-
 報廢率
-
 重工率
 
 OEE
-
 稼動率
-
 品質良率
-
 故障次數
 
 有品質異常紀錄
 
 
-注意：
-
-「方法對照」
-
-一定要顯示在表格中。
-
-
 ============================================================
-STEP 15-1｜Top 15 表格標註
+STEP 15-1｜Top 15 Formatting
 ============================================================
 
-使用：
+Anomaly Score：
 
-Pandas Styler
+{:.1f}
+
+
+換線超時率：
+
+{:.1%}
+
+
+加工超時率：
+
+{:.1%}
+
+
+停機占比：
+
+{:.1%}
+
+
+報廢率：
+
+{:.2%}
+
+
+重工率：
+
+{:.2%}
+
+
+OEE：
+
+{:.2%}
+
+
+稼動率：
+
+{:.2%}
+
+
+品質良率：
+
+{:.2%}
 
 
 異常層級：
@@ -1584,7 +1835,7 @@ Normal
 → 淡綠色
 
 
-「方法對照」欄位：
+方法對照：
 
 共同警示
 → 淡紅色 + 粗體
@@ -1602,104 +1853,80 @@ Normal
 → 淡綠色
 
 
-特別注意：
+不要另外建立一張
+「多變數隱性異常表」。
 
-如果相同 YUNFA_MES.xlsx 中
-某筆工單自然被模型判定為：
+直接在：
 
-Rule判定 = Normal
+方法對照
 
-IF判定 = 異常
-
-那麼「方法對照」欄位必須直接顯示：
-
-多變數隱性異常
-
-
-不要另外建立新的表格。
-
-不要手動改資料。
+欄位中標註即可。
 
 
 ============================================================
 STEP 16｜Rule-Based vs Isolation Forest
 ============================================================
 
-建立：
+固定：
 
 comparison_table = pd.crosstab(
     detect_df["Rule判定"],
     detect_df["IF判定"]
+).reindex(
+    index=["Normal", "Warning"],
+    columns=["正常", "異常"],
+    fill_value=0
 )
 
 
-Rows 固定：
-
-Normal
-Warning
+四格意義固定：
 
 
-Columns 固定：
-
-正常
-異常
+Normal / 正常
+→ 共同正常
 
 
-使用：
-
-reindex()
-
-確保即使某一類為 0，
-仍保留 2 × 2 結構。
+Normal / 異常
+→ 多變數隱性異常
 
 
-此表用於呈現：
+Warning / 正常
+→ 單變數規則警示
 
-Rule Normal + IF Normal
 
-Rule Normal + IF Anomaly
-
-Rule Warning + IF Normal
-
-Rule Warning + IF Anomaly
+Warning / 異常
+→ 共同警示
 
 
 ============================================================
 STEP 17｜Top Anomaly Multi-Factor Profile
 ============================================================
 
-取：
+固定：
 
+top_row =
 top_anomaly.iloc[0]
 
 
-作為最高異常事件。
+取得：
+
+top_pos =
+top_anomaly.index[0]
 
 
-取得其：
+取得：
 
-X_detect_scaled
+detect_position =
+detect_df.index.get_loc(top_pos)
 
-對應位置。
+
+取得：
+
+top_scaled =
+X_detect_scaled[detect_position]
 
 
 建立：
-
-profile_df
-
-
-這個 DataFrame 的欄位名稱必須依正確版本固定為：
-
-"特徵"
-
-"英文名稱"
-
-"原始值"
-
-"相對歷史標準化偏差"
-
-
-建立方式：
 
 profile_df = pd.DataFrame({
     "特徵": FEATURES,
@@ -1712,7 +1939,9 @@ profile_df = pd.DataFrame({
 再建立：
 
 profile_df["絕對偏差程度"] =
-profile_df["相對歷史標準化偏差"].abs()
+profile_df[
+    "相對歷史標準化偏差"
+].abs()
 
 
 依：
@@ -1722,16 +1951,15 @@ profile_df["相對歷史標準化偏差"].abs()
 由高到低排序。
 
 
-注意：
+非常重要：
 
-這裡固定使用：
+profile_df 使用：
 
-profile_df["特徵"]
+"特徵"
 
+不是：
 
-不可改成：
-
-profile_df["變數"]
+"變數"
 
 
 避免：
@@ -1739,18 +1967,37 @@ profile_df["變數"]
 KeyError: '變數'
 
 
-顯示：
+============================================================
+STEP 17-1｜Profile 指標完整性
+============================================================
 
-最高異常事件－多因素偏差輪廓
+Profile 必須完整包含 11 項：
 
+Setup Overrun
 
-並註明：
+Processing Overrun
 
-「此輪廓描述與歷史基準的偏離程度，不代表因果關係。」
+Downtime Ratio
+
+Scrap Rate
+
+Rework Rate
+
+Context Setup Deviation
+
+Context Processing Deviation
+
+Context Downtime Deviation
+
+Context Scrap Deviation
+
+Context Rework Deviation
+
+Throughput Deviation
 
 
 ============================================================
-CHART 1｜Top Anomaly Score Ranking
+CHART 1｜Top 15 Anomaly Score
 ============================================================
 
 使用：
@@ -1758,41 +2005,24 @@ CHART 1｜Top Anomaly Score Ranking
 top_anomaly
 
 
-建立：
-
-Horizontal Bar Chart
-
-
-標題：
-
-Top 15 MES Anomaly Events - 2026
-
-
-EventLabel：
+Event Label：
 
 "WO " + 工單ID
 + " | OP " + 工序序號
 + " | MC " + 機台ID
 
 
-例如：
+Title：
 
-WO WO00830 | OP 20 | MC CNC-07
-
-
-注意：
-
-Y 軸不要使用中文工序名稱。
-
-所有圖表文字使用英文。
+Top 15 MES Anomaly Events - 2026
 
 
-X Axis：
+X：
 
 Anomaly Score (Historical Percentile)
 
 
-Y Axis：
+Y：
 
 Work Order | Operation | Machine
 
@@ -1807,24 +2037,28 @@ Red
 Gold
 
 
-圖表：
+全部圖表文字：
 
-白色背景。
+英文。
 
 
 ============================================================
 CHART 2｜PCA 2D MES Anomaly Map
 ============================================================
 
-建立：
+固定：
 
 pca = PCA(n_components=2)
 
 
-PCA 不可只對 2026 做 fit。
+PCA 輸入必須使用：
+
+X_train_scaled
++
+X_detect_scaled
 
 
-必須：
+固定：
 
 all_scaled = np.vstack([
     X_train_scaled,
@@ -1832,7 +2066,7 @@ all_scaled = np.vstack([
 ])
 
 
-再：
+固定：
 
 all_pca =
 pca.fit_transform(all_scaled)
@@ -1848,44 +2082,34 @@ detect_pca =
 all_pca[len(X_train_scaled):]
 
 
-這樣：
+不可：
 
-2023–2025
-
-與：
-
-2026
-
-才位於同一個 PCA Coordinate Space。
+只對 X_detect_scaled fit PCA。
 
 
-注意：
+不可：
 
-X_train_scaled 與 X_detect_scaled
-必須來自 STEP 7 的：
-
-history Median
-+
-fillna(0)
-+
-StandardScaler
+重新由原始 events 建 PCA。
 
 
-不可重新使用未處理的原始資料。
+不可：
+
+建立第二組 Feature。
 
 
-畫面：
+Historical：
 
-Historical 2023-2025
-→ Gray
-
-
-2026 Normal
-→ Green
+Gray
 
 
-2026 Anomaly
-→ Red
+2026 Normal：
+
+Green
+
+
+2026 Anomaly：
+
+Red
 
 
 Title：
@@ -1893,41 +2117,34 @@ Title：
 MES Multi-Variable Anomaly Map - PCA
 
 
-X：
-
-Principal Component 1
-
-
-Y：
-
-Principal Component 2
-
-
 ============================================================
 CHART 3｜Top Anomaly Multi-Factor Deviation Profile
 ============================================================
 
-使用：
-
-profile_df
-
-
-依：
-
-相對歷史標準化偏差
-
-排序。
-
-
-Y Axis：
+Y：
 
 profile_df["英文名稱"]
 
 
-不可使用中文 Feature Name。
+X：
+
+profile_df[
+    "相對歷史標準化偏差"
+]
 
 
-若：
+非常重要：
+
+這裡的值來源是：
+
+StandardScaler 後的
+X_detect_scaled
+
+
+不是重新計算 Context Z。
+
+
+如果：
 
 abs(value) >= 2
 
@@ -1936,29 +2153,12 @@ abs(value) >= 2
 
 其他：
 
-→ Soft Orange
+Soft Orange
 
 
-加入：
-
-x = 0
-
-垂直虛線。
-
-
-標題：
+Title：
 
 Top Anomaly - Multi-Factor Deviation Profile
-
-
-X Axis：
-
-Standardized Deviation from Historical Baseline
-
-
-Y Axis：
-
-MES Feature
 
 
 ============================================================
@@ -1975,26 +2175,21 @@ comparison_table
 2 × 2 Matrix
 
 
-X Axis：
+X：
 
 IF Normal
 IF Anomaly
 
 
-Y Axis：
+Y：
 
 Rule Normal
 Rule Warning
 
 
-每格顯示：
+每一格顯示：
 
 Number of Events
-
-
-標題：
-
-Rule-Based vs Isolation Forest
 
 
 使用：
@@ -2002,7 +2197,7 @@ Rule-Based vs Isolation Forest
 matplotlib
 
 
-不可使用：
+不要使用：
 
 seaborn
 
@@ -2016,22 +2211,17 @@ STEP 18｜AI Agent Decision Meaning
 【後續 AI Agent 應用意義】
 
 
-第一段：
+Isolation Forest：
 
-Isolation Forest 用來辨識多變數聯合行為中
-相對少見的製造事件。
+辨識多變數聯合行為中相對少見的製造事件。
 
 
-尤其：
+特別說明：
 
 Rule Normal + IF 異常
 
-代表：
+→ 多變數隱性異常
 
-多變數隱性異常。
-
-
-第二段：
 
 模型提供：
 
@@ -2042,191 +2232,434 @@ Anomaly Rank
 Multi-Factor Deviation Profile
 
 
-協助工程師判斷：
+AI Agent 可說：
 
-「主要偏差集中於何處」
-
-
-但不可直接宣稱：
-
-「故障原因就是……」
+主要偏差集中於……
 
 
-Isolation Forest 是：
+不可說：
 
-無監督異常偵測
-
-不是：
-
-因果診斷模型。
+故障原因就是……
 
 
-============================================================
-STEP 18-1｜Highest Priority Event
-============================================================
+因為：
 
-若：
+Isolation Forest 是異常偵測模型，
 
-len(top_anomaly) > 0
+不是因果診斷模型。
 
 
-取：
+最高優先事件：
 
 top = top_anomaly.iloc[0]
 
 
-Top 3 偏差 Feature 必須使用：
+Top 3 Feature：
 
-top_dev =
 profile_df.head(3)["特徵"].tolist()
+
+
+============================================================
+FINAL CHECK 1｜Golden Dataset Structure Validation
+============================================================
+
+若使用目前課程正式版：
+
+YUNFA_MES.xlsx
+
+則正確流程應自然得到：
+
+
+歷史資料 2023–2025：
+
+2,508 筆
+
+
+2026 Detection：
+
+714 筆
+
+
+總 Event：
+
+3,222 筆
+
+
+如果 Event 數量不同：
+
+不可繼續調模型。
+
+先檢查：
+
+Merge 是否被改動
+
+是否額外 drop_duplicates
+
+是否額外 dropna
+
+是否使用錯誤年度
+
+是否重複 Merge
+
+
+============================================================
+FINAL CHECK 2｜Golden Rule Threshold Validation
+============================================================
+
+只有在使用同一份課程正式版
+YUNFA_MES.xlsx 時，
+
+以下 Threshold 應自然接近：
+
+
+換線超時率 95th：
+
+0.280000
+
+
+加工超時率 95th：
+
+0.16418571428571432
+
+
+停機占比 95th：
+
+0.06081250000000011
+
+
+報廢率 95th：
+
+0.0225
+
+
+重工率 95th：
+
+0.0
+
+
+產出效率偏差_Z 5th：
+
+-1.4635803303206782
 
 
 注意：
 
-一定是：
+這些值只能拿來「驗證」。
 
-["特徵"]
-
-不是：
-
-["變數"]
+不可直接把 Threshold 寫死成這些數值。
 
 
-輸出：
+實際程式仍必須使用：
 
-工單ID
+train_df[feature].quantile(q)
 
-工序
-
-機台
-
-Anomaly Score
-
-主要偏差特徵
-
-
-最後顯示：
-
-「建議：優先檢視製程執行、停機紀錄、設備日績效與品質異常紀錄。」
+自行計算。
 
 
 ============================================================
-FINAL｜程式撰寫規則
+FINAL CHECK 3｜Golden Isolation Forest Validation
 ============================================================
 
-請嚴格遵守以下規格：
+使用同一份正式資料時：
 
-1. 一次提供完整 Python Code。
+2026 Event：
 
-2. 可直接在 Google Colab 執行。
+714
 
-3. CPU 即可。
 
-4. 不使用 GPU。
+IF Normal：
 
-5. 不使用 API Key。
+687
 
-6. 不使用付費服務。
 
-7. 使用：
-   pandas
-   numpy
-   matplotlib
-   scikit-learn
-   openpyxl
+IF Anomaly：
 
-8. 不使用 seaborn。
+27
 
-9. 每個 STEP 保留清楚標題。
 
-10. 表格與說明文字使用中文。
+若不是：
 
-11. matplotlib 圖表文字全部使用英文。
+687 / 27
 
-12. 圖表白色背景。
+請先檢查：
 
-13. 使用柔和暖色系。
+11 FEATURES
 
-14. HISTORY_YEARS 固定：
-    [2023, 2024, 2025]
+FEATURE 順序
 
-15. DETECTION_YEAR 固定：
-    2026
+Context Z
 
-16. CONTAMINATION 固定：
-    0.05
+Historical Median
 
-17. RANDOM_STATE 固定：
-    42
+StandardScaler
 
-18. TOP_N 固定：
-    15
+Isolation Forest Parameters
 
-19. Isolation Forest 固定：
-    n_estimators=400
-    max_samples="auto"
+
+不得修改：
+
+contamination
+
+來迎合結果。
+
+
+============================================================
+FINAL CHECK 4｜Golden 2×2 Matrix Validation
+============================================================
+
+使用同一份正式資料時，
+
+正確 Golden Result 應自然為：
+
+
+Rule Normal + IF Normal
+= 628
+
+
+Rule Normal + IF Anomaly
+= 1
+
+
+Rule Warning + IF Normal
+= 59
+
+
+Rule Warning + IF Anomaly
+= 26
+
+
+也就是：
+
+
+共同正常
+= 628
+
+
+多變數隱性異常
+= 1
+
+
+單變數規則警示
+= 59
+
+
+共同警示
+= 26
+
+
+總數：
+
+628 + 1 + 59 + 26
+= 714
+
+
+如果出現：
+
+628 / 1 / 62 / 23
+
+或其他數字，
+
+不得修改最終分類結果。
+
+表示前面的 Data Pipeline
+或 Isolation Forest 輸入沒有完全重現 Golden Version。
+
+
+請依序檢查：
+
+1. 2023–2025 是否 2,508 筆
+2. 2026 是否 714 筆
+3. events 是否 3,222 筆
+4. 是否額外 drop_duplicates
+5. 是否額外 dropna
+6. 是否改了 Merge
+7. 是否使用正確「開單日期」切年份
+8. 是否正確建立報工日期
+9. 停機占比是否使用：
+   生產報工停機工時_hr
+   ÷
+   機台主檔每日可用工時
+10. 六個 Context Z 是否一一對應正確
+11. Primary Group 是否為：
+    SKU + 工序序號
+12. Fallback 是否為：
+    工作中心
+13. FEATURES 是否正好 11 個
+14. FEATURES 順序是否一致
+15. Median 是否只來自 2023–2025
+16. 是否保留最後 .fillna(0)
+17. StandardScaler 是否只 fit 2023–2025
+18. Isolation Forest 是否固定：
+    400 trees
     contamination=0.05
     random_state=42
-    n_jobs=-1
+19. Rule Threshold 是否使用 pandas quantile()
+20. high 是否使用 >
+21. low 是否使用 <
+22. 是否把 Anomaly Score >=95
+    錯當 IF 異常
 
-20. FEATURES 固定 11 個，不可自行修改。
 
-21. StandardScaler 只能使用 2023–2025 fit。
+============================================================
+FINAL CHECK 5｜WO00830 Hidden Anomaly Validation
+============================================================
 
-22. 2026 只能 transform。
+不可硬編碼：
 
-23. Historical Median 只能由 2023–2025 計算。
+WO00830
 
-24. Median 補值後必須保留：
-    .fillna(0)
 
-25. 品質異常不得作為 Isolation Forest Feature。
+但是使用相同正式資料與 Golden Pipeline 時，
 
-26. 2026 機台稼動日報不得作為 Isolation Forest Feature。
+程式應自然找到：
 
-27. 年度切分必須使用「開單日期」。
+報工ID：
 
-28. 報工日期必須由「實際開始時間」建立。
+PR002727
 
-29. Anomaly Score 必須使用歷史 score percentile。
 
-30. Rule-Based 固定使用歷史 95 / 5 percentile。
+工單ID：
 
-31. 「多變數隱性異常」必須由程式自動產生。
+WO00830
 
-32. 判定固定：
-    Rule Normal + IF 異常
-    = 多變數隱性異常
 
-33. 不可硬編碼任何工單ID為多變數隱性異常。
+SKU：
 
-34. 不可硬編碼 WO00830。
+PM-SUS-A
 
-35. 若 WO00830 在相同資料與正確模型下被自然判定為：
-    Rule Normal + IF 異常，
-    則 Top 15 表格中的「方法對照」
-    必須自動顯示：
-    多變數隱性異常。
 
-36. 不需要額外產生一張
-    「多變數隱性異常事件」獨立表格。
+機台：
 
-37. 只需在原本 Top 15 表格
-    的「方法對照」欄位中標註。
+CNC-07
 
-38. 多變數隱性異常：
-    淡紫色背景 + 粗體。
 
-39. profile_df 欄位必須使用「特徵」，
-    不可改成「變數」。
+方法對照：
 
-40. PCA 必須將：
-    X_train_scaled
-    與
-    X_detect_scaled
-    合併後共同 fit_transform。
+多變數隱性異常
 
-41. PCA 不可只 fit 2026。
 
-42. 最後請只輸出完整可執行 Python Code，
-    不要省略任何部分。
+其核心判定應為：
+
+Rule Flag Count = 0
+
+Rule判定 = Normal
+
+IF判定 = 異常
+
+
+Anomaly Score 應自然約為：
+
+98.724
+
+
+其製造指標應自然約為：
+
+
+換線超時率：
+
+0.275
+= 27.5%
+
+
+加工超時率：
+
+0.1375
+= 13.75%
+
+
+停機占比：
+
+0.05625
+= 5.625%
+
+
+報廢率：
+
+0
+
+
+重工率：
+
+0
+
+
+換線情境偏差_Z：
+
+約 2.328559
+
+
+加工情境偏差_Z：
+
+約 1.291825
+
+
+停機情境偏差_Z：
+
+約 6.046918
+
+
+報廢情境偏差_Z：
+
+約 -0.486234
+
+
+重工情境偏差_Z：
+
+0
+
+
+產出效率偏差_Z：
+
+約 -1.226861
+
+
+這些數值：
+
+只能用於 Regression Check。
+
+不可硬編碼到模型。
+
+不可直接指定 PR002727 為異常。
+
+不可直接指定 WO00830 為異常。
+
+
+若自然計算結果不同：
+
+表示前面的 Pipeline 有差異。
+
+
+============================================================
+FINAL｜Output Requirements
+============================================================
+
+最後請：
+
+一次輸出完整 Python Code。
+
+不可省略任何 STEP。
+
+不可只輸出修改片段。
+
+不可改變上述分析邏輯。
+
+不可為了符合 Golden Result
+直接寫死 628、1、59、26。
+
+不可為了符合 Golden Result
+直接寫死 WO00830。
+
+Golden Result 只能用於：
+
+Regression Validation。
+
+
+程式真正的結果：
+
+必須由 YUNFA_MES.xlsx
+經由完全相同的資料處理、
+Feature Engineering、
+StandardScaler、
+Isolation Forest
+與 Rule-Based Pipeline
+自然計算得到。
