@@ -742,12 +742,6 @@ def run_regression(product_line):
     plt.tight_layout()
     plt.show()
 
-    print("\n【結果說明】")
-    print(
-        "圖表採用暖色系柔和配色，圖中文字維持英文；"
-        "表格與模型解說維持中文，方便課堂說明。"
-    )
-
     return model, result, coef_df
 
 
