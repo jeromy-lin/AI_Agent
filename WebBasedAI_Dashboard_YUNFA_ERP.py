@@ -57,7 +57,6 @@ from sklearn.decomposition import PCA
 from sklearn.ensemble import IsolationForest
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import (
-    silhouette_score,
     r2_score,
     mean_absolute_error,
     mean_squared_error,
@@ -110,43 +109,26 @@ def kpi_cards(kpis):
     return html
 
 
-def silhouette_explanation_html(score):
-    if score is None or (isinstance(score, float) and np.isnan(score)):
-        current = "N/A"
-        interpretation = "目前尚未執行分群。"
+def elbow_explanation_html(elbow=None):
+    if elbow:
+        values = dict(elbow)
+        detail = f"目前示範設定為 <b>4 群</b>，其 SSE 為 <b>{values[4]:,.1f}</b>。"
+        if 3 in values and 5 in values:
+            detail += (f"由 3 群增至 4 群，SSE 降低 {values[3]-values[4]:,.1f}；"
+                       f"由 4 群增至 5 群，SSE 降低 {values[4]-values[5]:,.1f}。")
     else:
-        score = float(score)
-        current = f"{score:.1f}"
-        if score >= 0.50:
-            interpretation = "目前分群分離度相對清楚。"
-        elif score >= 0.25:
-            interpretation = "目前有一定分群結構，但群與群之間仍有重疊。"
-        elif score >= 0:
-            interpretation = "目前群與群之間重疊較多，分群效果偏弱。"
-        else:
-            interpretation = "目前部分樣本可能更接近其他群，分群結果需要重新檢視。"
-
+        detail = "上傳 ERP 並執行分析後，可在圖表下拉選單查看 SSE 曲線。"
     return f"""
     <div class="metric-help">
-      <div class="metric-help-title">📘 Silhouette Score 怎麼看？</div>
+      <div class="metric-help-title">📘 Elbow Method 怎麼看？</div>
       <div class="metric-help-row">
-        <span class="metric-help-name">Silhouette Score</span>
-        <span class="metric-help-current">{current}</span>
+        對不同群數計算群內平方和（SSE）；群數增加時，SSE 通常會下降。
+        觀察曲線由陡轉緩的位置，可作為選擇分群數的參考。
       </div>
-      <div class="metric-help-row">
-        衡量「同一群內是否夠接近、不同群之間是否夠分開」。
-        數值範圍約為 <b>-1 ～ 1</b>，通常越接近 1，分群結構越清楚。
-      </div>
-      <div class="silhouette-scale">
-        <div class="sil-bad">&lt; 0<br>需檢視</div>
-        <div class="sil-low">0 ～ 0.25<br>重疊較多</div>
-        <div class="sil-mid">0.25 ～ 0.50<br>有一定結構</div>
-        <div class="sil-good">&gt; 0.50<br>較清楚</div>
-      </div>
-      <div class="metric-help-row"><b>本次解讀：</b>{interpretation}</div>
+      <div class="metric-help-row"><b>本次資料：</b>{detail}</div>
       <div class="metric-help-note">
-        這些區間是課堂上方便理解的常見直覺，不是硬性標準；
-        還要搭配 PCA 圖、各群人數與群體特徵一起判讀。
+        本程式固定以四群示範客戶策略；曲線不保證四群就是最佳群數，
+        仍需結合各群人數及實際業務意義判讀。
       </div>
     </div>
     """
@@ -373,26 +355,8 @@ CUSTOM_CSS = """
     font-size: 13px;
     color: #475569 !important;
 }
-.silhouette-scale {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 5px;
-    margin-top: 10px;
-}
-.silhouette-scale > div {
-    border-radius: 8px;
-    padding: 6px 5px;
-    text-align: center;
-    font-size: 12px;
-    font-weight: 750;
-}
-.sil-bad { background: #fee2e2 !important; }
-.sil-low { background: #fef3c7 !important; }
-.sil-mid { background: #dbeafe !important; }
-.sil-good { background: #dcfce7 !important; }
 @media (max-width: 700px) {
     .yunfa-hero { padding: 18px; }
-    .silhouette-scale { grid-template-columns: repeat(2,1fr); }
     .kpi-card { min-width: 130px; }
     .chart-view { max-height: 370px; }
 }
@@ -417,6 +381,7 @@ CUSTOMER_CHART_CHOICES = [
     ("圖 1｜PCA 客戶分群位置", 0),
     ("圖 2｜各客戶群人數", 1),
     ("圖 3｜客戶群特徵比較", 2),
+    ("圖 4｜Elbow Method 群數比較", 3),
 ]
 COST_CHART_CHOICES = [
     ("圖 1｜實際與預測成本", 0),
@@ -459,6 +424,8 @@ def build_customer(erp_path):
     feats=["年化採購金額_TWD","訂單次數","平均訂單金額_TWD","報價次數","報價成交率","平均折扣率","平均預估毛利率","最近交易天數"]
     c[feats]=c[feats].apply(pd.to_numeric,errors="coerce").fillna(0)
     scaler=StandardScaler(); X=scaler.fit_transform(c[feats]); km=KMeans(n_clusters=4,random_state=42,n_init=20); c["Cluster"]=km.fit_predict(X)
+    elbow=[(k, float(km.inertia_) if k==4 else float(KMeans(n_clusters=k,random_state=42,n_init=10).fit(X).inertia_))
+           for k in range(1,min(8,len(c)-1)+1)]
     centers=pd.DataFrame(km.cluster_centers_,columns=feats,index=range(4)); rem=set(range(4)); names={}
     risk=(centers["最近交易天數"]-.5*centers["年化採購金額_TWD"]-.5*centers["訂單次數"]).idxmax(); names[risk]="沉睡／流失風險型"; rem.remove(risk)
     vip=(centers["年化採購金額_TWD"]+centers["訂單次數"]+centers["報價次數"]-centers["最近交易天數"]).loc[list(rem)].idxmax(); names[vip]="高價值活躍型"; rem.remove(vip)
@@ -467,9 +434,7 @@ def build_customer(erp_path):
     strategy={"高價值活躍型":"維持高互動、優先服務、交叉銷售與長期合作","成長潛力型":"提高成交率、增加產品組合與業務接觸","價格敏感型":"管理折扣、檢查毛利、採差異化報價策略","沉睡／流失風險型":"優先喚回、追蹤未成交原因與近期需求"}
     c["建議策略"]=c["K-Means行為分群"].map(strategy)
     pca=PCA(2); Z=pca.fit_transform(X); c["PC1"]=Z[:,0]; c["PC2"]=Z[:,1]
-    try: sil=float(silhouette_score(X,c["Cluster"]))
-    except: sil=np.nan
-    return {"data":c,"features":feats,"kpis":{"客戶數":len(c),"分群數":4,"Silhouette Score":None if pd.isna(sil) else sil}}
+    return {"data":c,"features":feats,"elbow":elbow,"kpis":{"客戶數":len(c),"分群數":4}}
 
 def build_cost(erp_path):
     xls=pd.ExcelFile(erp_path); product=pd.read_excel(xls,"產品主檔"); cost=pd.read_excel(xls,"成本結算")
@@ -535,8 +500,6 @@ def customer_chart_meanings(analysis):
     dormant_n = int(counts.get(dormant, 0))
     dormant_value = float(annual.get(dormant, 0)) / 1000
     vip_share = float(annual.get(vip, 0)) / total_annual * 100 if total_annual else 0
-    sil = analysis["kpis"].get("Silhouette Score")
-    sil_text = f"{sil:.2f}" if sil is not None else "無法計算"
     largest = str(counts.idxmax())
     largest_n = int(counts.max())
     discount = d.groupby(group)["平均折扣率"].mean()
@@ -544,7 +507,7 @@ def customer_chart_meanings(analysis):
     price_discount = float(discount.get(price, 0)) * 100
     price_margin = float(margin.get(price, 0)) * 100
     return [
-        f"本次將 {n:,} 位客戶分成四群，Silhouette Score 為 {sil_text}。圖上相近的點代表交易與報價行為較相似；"
+        f"本次將 {n:,} 位客戶分成四群。圖上相近的點代表交易與報價行為較相似；"
         f"高價值活躍型共 {vip_n:,} 位，年化採購金額占樣本 {vip_share:.1f}%。"
         "業務可先查看這一群的服務與續單狀況；若不同顏色大量重疊，分群不宜直接當作客戶分級依據。",
 
@@ -555,6 +518,9 @@ def customer_chart_meanings(analysis):
         f"各柱是群組相對全體平均的標準化差距，不是實際金額。這次價格敏感型的平均折扣率為 "
         f"{price_discount:.1f}%，平均預估毛利率為 {price_margin:.1f}%。"
         "報價檢討時可先核對該群折扣與毛利，再對照交易頻率及最近交易天數，決定哪些客戶要調整報價條件或優先追蹤。",
+
+        "本圖比較不同分群數的群內平方和（SSE）。曲線若由明顯下降轉為平緩，轉折處可作為群數參考。"
+        "圖中的四群為本課程的示範設定，不代表資料必然以四群最合適；可結合各群人數與業務可解釋性評估。",
     ]
 
 def cost_chart_meanings(analysis):
@@ -664,6 +630,18 @@ def customer_original_charts(x):
     _one_decimal_axis(ax,y=True)
     ax.legend(frameon=False,ncol=2); ax.grid(axis="y",alpha=.35); fig.tight_layout()
     charts.append((*_fig_to_gallery(fig,"客戶群特徵比較"), meanings[2]))
+
+    k_values, sse_values = zip(*x["elbow"])
+    fig,ax=plt.subplots(figsize=(13,6.1),facecolor="white")
+    ax.plot(k_values,sse_values,color="#698F85",linewidth=2.5,marker="o",markersize=7)
+    ax.scatter([4],[dict(x["elbow"])[4]],color="#D88B63",s=140,zorder=3,label="Teaching setting: K = 4")
+    ax.set_xticks(k_values)
+    ax.set_xlabel("Number of Clusters (K)")
+    ax.set_ylabel("Within-Cluster Sum of Squares (SSE)")
+    ax.set_title("Elbow Method for Customer Segmentation",fontsize=14,fontweight="bold")
+    _one_decimal_axis(ax,y=True)
+    ax.legend(frameon=False); ax.grid(True,alpha=.3); fig.tight_layout()
+    charts.append((*_fig_to_gallery(fig,"Elbow Method 群數比較"), meanings[3]))
     return charts
 
 def cost_original_charts(r):
@@ -773,7 +751,7 @@ def run_customer_web(erp_file, progress=gr.Progress()):
         return (
             "❌ 請先上傳 YUNFA_ERP.xlsx。",
             "",
-            silhouette_explanation_html(None),
+            elbow_explanation_html(None),
             df_to_dark_html(pd.DataFrame(), "尚無客戶分群結果"),
             [], gr.update(value=0), None,
             chart_meaning("請先上傳 ERP 檔案並執行分析。")
@@ -797,7 +775,7 @@ def run_customer_web(erp_file, progress=gr.Progress()):
         table = table[cols].sort_values("年化採購金額_TWD", ascending=False).head(20)
         table = display_customer_table(table)
 
-        progress(0.83, desc="產生 3 張客戶分群圖表")
+        progress(0.83, desc="產生 4 張客戶分群圖表")
         charts = customer_original_charts(result)
 
         elapsed = time.time() - t0
@@ -810,7 +788,7 @@ def run_customer_web(erp_file, progress=gr.Progress()):
         return (
             status,
             kpi_cards(display_kpis(result["kpis"])),
-            silhouette_explanation_html(result["kpis"].get("Silhouette Score")),
+            elbow_explanation_html(result["elbow"]),
             df_to_dark_html(table),
             charts, gr.update(value=0), *select_chart(charts, 0)
         )
@@ -818,7 +796,7 @@ def run_customer_web(erp_file, progress=gr.Progress()):
         return (
             f"❌ K-Means 執行失敗：{type(e).__name__}: {e}",
             "",
-            silhouette_explanation_html(None),
+            elbow_explanation_html(None),
             df_to_dark_html(pd.DataFrame(), "K-Means 執行失敗"),
             [], gr.update(value=0), None,
             chart_meaning("客戶分群未完成，請檢查上方錯誤訊息。")
@@ -908,7 +886,7 @@ def create_erp_app():
                       <div class="method-note">
                         問題：哪些客戶行為相似？應採取不同經營策略嗎？<br>
                         使用：採購金額、訂單頻率、成交率、折扣、毛利、Recency 等 8 個特徵。<br>
-                        輸出：PCA、Segment Distribution、Segment Profile，共 3 張圖。
+                        輸出：PCA、Segment Distribution、Segment Profile、Elbow Method，共 4 張圖。
                       </div>
                     </div>
                     """
@@ -941,7 +919,7 @@ def create_erp_app():
                 with gr.Column(scale=2):
                     customer_kpis = gr.HTML()
                 with gr.Column(scale=1):
-                    customer_help = gr.HTML(value=silhouette_explanation_html(None))
+                    customer_help = gr.HTML(value=elbow_explanation_html(None))
             gr.HTML('<div class="yunfa-section-title">客戶分群明細</div><div class="yunfa-unit-note">金額：KNTD（千元）｜比率：%｜顯示至小數一位</div>')
             customer_table = gr.HTML(value=df_to_dark_html(pd.DataFrame(), "尚未執行 K-Means"))
             gr.HTML('<div class="yunfa-section-title">分群圖表</div>')
